@@ -1,0 +1,24 @@
+{
+  "originHash" : "64f766c5b3795febb61332298f0353344a50595564982950c93df67da9cf33cf",
+  "pins" : [
+    {
+      "identity" : "openacswift",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/zkmopro/OpenACSwift",
+      "state" : {
+        "branch" : "main",
+        "revision" : "2a50a3d6ad4c3a4f092ed698d13ad505b85b6b19"
+      }
+    },
+    {
+      "identity" : "zipfoundation",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/weichsel/ZIPFoundation",
+      "state" : {
+        "revision" : "22787ffb59de99e5dc1fbfe80b19c97a904ad48d",
+        "version" : "0.9.20"
+      }
+    }
+  ],
+  "version" : 3
+}
