@@ -5,8 +5,11 @@
 
 import Foundation
 import Observation
+import UIKit
 import OpenACSwift
 import ZIPFoundation
+
+let serverBaseURL = "https://cc8e-211-75-7-191.ngrok-free.app"
 
 private let circuitZipURL = URL(string: "https://github.com/zkmopro/zkID/releases/download/latest/rs256.r1cs.zip")!
 
@@ -132,6 +135,94 @@ final class ProofViewModel {
         let (tmpURL, _) = try await session.download(from: url, delegate: delegate)
         try? FileManager.default.removeItem(at: destination)
         try FileManager.default.moveItem(at: tmpURL, to: destination)
+    }
+
+    // MARK: - SP Ticket / MOICA
+
+    static let returnScheme = "openac"
+    static let returnURL    = "\(returnScheme)://callback"
+
+    var idNum: String = "A123456789"
+    var spTicketStatus: StepStatus = .idle
+    var spTicket: String?
+    var rtnVal: String?
+
+    func fetchSPTicket() async {
+        spTicketStatus = .running
+        spTicket = nil
+        rtnVal = nil
+        do {
+            let url = URL(string: "\(serverBaseURL)/fido/sp-ticket")!
+            var request = URLRequest(url: url)
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = try JSONSerialization.data(withJSONObject: ["id_num": idNum])
+            let (data, response) = try await URLSession.shared.data(for: request)
+            let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+
+            // Extract sp_ticket from result.sp_ticket.
+            let body = String(data: data, encoding: .utf8) ?? ""
+            if let json   = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let result = json["result"] as? [String: Any],
+               let ticket = result["sp_ticket"] as? String {
+                spTicket = ticket
+            }
+            spTicketStatus = spTicket != nil
+                ? .success("ticket received")
+                : .failure("sp_ticket not found in response: \(body)")
+        } catch {
+            spTicketStatus = .failure(error.localizedDescription)
+        }
+    }
+
+    var athResultStatus: StepStatus = .idle
+
+    func openMOICA() {
+        guard let ticket = spTicket else { return }
+        var comps = URLComponents()
+        comps.scheme = "mobilemoica"
+        comps.host   = "moica.moi.gov.tw"
+        comps.path   = "/a2a/verifySign"
+        let rtnUrlBase64 = Data(Self.returnURL.utf8).base64EncodedString()
+        comps.queryItems = [
+            URLQueryItem(name: "sp_ticket", value: ticket),
+            URLQueryItem(name: "rtn_url",   value: rtnUrlBase64),
+            URLQueryItem(name: "rtn_val",   value: ""),
+        ]
+        guard let deepLink = comps.url else { return }
+        print("deepLink: \(deepLink)")
+        UIApplication.shared.open(deepLink)
+    }
+
+    func fetchAthResult() async {
+        athResultStatus = .running
+        guard let ticket = spTicket else {
+            athResultStatus = .failure("No sp_ticket available")
+            return
+        }
+        do {
+            let url = URL(string: "\(serverBaseURL)/fido/ath-result")!
+            var request = URLRequest(url: url)
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = try JSONSerialization.data(withJSONObject: ["sp_ticket": ticket])
+            let (data, response) = try await URLSession.shared.data(for: request)
+            let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+            let body = String(data: data, encoding: .utf8) ?? "(empty)"
+            athResultStatus = .success("HTTP \(statusCode): \(body)")
+            print("athResultStatus: \(athResultStatus)")
+        } catch {
+            athResultStatus = .failure(error.localizedDescription)
+            print("athResultStatus: \(athResultStatus)")
+        }
+    }
+
+    func handleCallback(url: URL) {
+        guard url.scheme == Self.returnScheme,
+              let comps = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              let item  = comps.queryItems?.first(where: { $0.name == "rtn_val" })
+        else { return }
+        rtnVal = item.value
     }
 
     // MARK: - Pipeline Actions
