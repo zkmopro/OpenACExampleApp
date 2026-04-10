@@ -1,0 +1,22 @@
+# Secrets — never commit real credentials
+.env
+OpenACExampleApp/Secrets.swift
+
+# Xcode
+xcuserdata/
+*.xccheckout
+*.moved-aside
+DerivedData/
+*.pbxuser
+*.mode1v3
+*.mode2v3
+*.perspectivev3
+*.hmap
+*.ipa
+
+# SPM
+.build/
+.swiftpm/
+
+# macOS
+.DS_Store
