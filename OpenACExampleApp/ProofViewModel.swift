@@ -9,9 +9,7 @@ import UIKit
 import OpenACSwift
 import ZIPFoundation
 
-let serverBaseURL = "https://cc8e-211-75-7-191.ngrok-free.app"
-
-private let circuitZipURL = URL(string: "https://github.com/zkmopro/zkID/releases/download/latest/rs256.r1cs.zip")!
+private let circuitZipURL = URL(string: "https://pub-ef10768896384fdf9617f26d43e11a65.r2.dev/sha256rsa4096.r1cs.zip")!
 
 @Observable
 @MainActor
@@ -60,15 +58,21 @@ final class ProofViewModel {
         let fm = FileManager.default
         try fm.createDirectory(at: workDir, withIntermediateDirectories: true)
 
+        // For simulator testing
         // Copy bundled input.json on first launch.
         if let src = Bundle.main.path(forResource: "input", ofType: "json") {
             let dst = workDir.appendingPathComponent("input.json")
-            if !fm.fileExists(atPath: dst.path) {
-                try fm.copyItem(atPath: src, toPath: dst.path)
-            }
+            print("copying input.json from \(src) to \(dst.path)")
+            try fm.copyItem(atPath: src, toPath: dst.path)
         }
+        circuitReady = fm.fileExists(atPath: workDir.appendingPathComponent("sha256rsa4096.r1cs").path)
 
-        circuitReady = fm.fileExists(atPath: workDir.appendingPathComponent("rs256.r1cs").path)
+        // Copy bundled MOICA-G3.cer into workDir if not already present
+        let certDest = workDir.appendingPathComponent("MOICA-G3.cer")
+        if !fm.fileExists(atPath: certDest.path),
+           let certSrc = Bundle.main.url(forResource: "MOICA-G3", withExtension: "cer") {
+            try fm.copyItem(at: certSrc, to: certDest)
+        }
     }
 
     // MARK: - Download Circuit
@@ -82,7 +86,7 @@ final class ProofViewModel {
         unzipSeconds = nil
 
         let tmpZip = FileManager.default.temporaryDirectory
-            .appendingPathComponent("rs256.r1cs.zip")
+            .appendingPathComponent("sha256rsa4096.r1cs.zip")
         let destDir = workDir
 
         do {
@@ -115,7 +119,7 @@ final class ProofViewModel {
             unzipSeconds = unzip
 
             circuitReady = FileManager.default.fileExists(
-                atPath: workDir.appendingPathComponent("rs256.r1cs").path
+                atPath: workDir.appendingPathComponent("sha256rsa4096.r1cs").path
             )
         } catch {
             downloadError = error.localizedDescription
@@ -145,33 +149,44 @@ final class ProofViewModel {
     var idNum: String = "A123456789"
     var spTicketStatus: StepStatus = .idle
     var spTicket: String?
+    var tbs: String?
     var rtnVal: String?
 
-    func fetchSPTicket() async {
+    // Stored ath-result fields used to generate circuit input
+    var athResponseString: String?
+    var athIssuerCert: String?
+    var athIssuerId: String = "g2"
+    var generateInputStatus: StepStatus = .idle
+
+
+    func computeSPTicket() async {
         spTicketStatus = .running
         spTicket = nil
         rtnVal = nil
         do {
-            let url = URL(string: "\(serverBaseURL)/fido/sp-ticket")!
-            var request = URLRequest(url: url)
-            request.httpMethod = "POST"
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.httpBody = try JSONSerialization.data(withJSONObject: ["id_num": idNum])
-            let (data, response) = try await URLSession.shared.data(for: request)
-            let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+            let raw = try await getSpTicket(params: SpTicketParams(
+                transactionID: UUID().uuidString,
+                idNum:         idNum,
+                opCode:        "SIGN",
+                opMode:        "APP2APP",
+                hint:          "待簽署資料",
+                timeLimit:     "600",
+                signData:      "ZTc3NWYyODA1ZmI5OTNlMDVhMjA4ZGJmZjE1ZDFjMQ==",
+                signType:      "PKCS#1",
+                hashAlgorithm: "SHA256",
+                tbsEncoding:   "base64"
+            ))
 
-            // Extract sp_ticket from result.sp_ticket.
-            let body = String(data: data, encoding: .utf8) ?? ""
-            if let json   = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-               let result = json["result"] as? [String: Any],
-               let ticket = result["sp_ticket"] as? String {
-                spTicket = ticket
-            }
-            spTicketStatus = spTicket != nil
+            let json = try JSONSerialization.jsonObject(with: Data(raw.utf8)) as! [String: Any]
+            spTicket = ((json["result"] as? [String: Any])?["sp_ticket"] as? String) ?? ""
+            print("spTicket: \(spTicket)")
+
+            spTicketStatus = spTicket?.isEmpty == false
                 ? .success("ticket received")
-                : .failure("sp_ticket not found in response: \(body)")
+                : .failure("sp_ticket not found in response: \(raw)")
         } catch {
             spTicketStatus = .failure(error.localizedDescription)
+            print("spTicketStatus: \(spTicketStatus), error: \(error)")
         }
     }
 
@@ -194,28 +209,25 @@ final class ProofViewModel {
         UIApplication.shared.open(deepLink)
     }
 
-    func fetchAthResult() async {
+
+    func pollAthResult() async {
         athResultStatus = .running
         guard let ticket = spTicket else {
             athResultStatus = .failure("No sp_ticket available")
             return
         }
         do {
-            let url = URL(string: "\(serverBaseURL)/fido/ath-result")!
-            var request = URLRequest(url: url)
-            request.httpMethod = "POST"
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.httpBody = try JSONSerialization.data(withJSONObject: ["sp_ticket": ticket])
-            let (data, response) = try await URLSession.shared.data(for: request)
-            let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
-            let body = String(data: data, encoding: .utf8) ?? "(empty)"
-            athResultStatus = .success("HTTP \(statusCode): \(body)")
-            print("athResultStatus: \(athResultStatus)")
+            let result = try await pollSignResult(spTicket: ticket)
+            athResponseString = result.result?.signedResponse
+            athIssuerCert     = result.result?.cert
+            athResultStatus   = .success("result: \(result)")
+            print("pollAthResult: \(athResultStatus)")
         } catch {
             athResultStatus = .failure(error.localizedDescription)
-            print("athResultStatus: \(athResultStatus)")
+            print("pollAthResult error: \(athResultStatus)")
         }
     }
+
 
     func handleCallback(url: URL) {
         guard url.scheme == Self.returnScheme,
@@ -229,6 +241,7 @@ final class ProofViewModel {
 
 
     func reset() {
+        generateInputStatus = .idle
         setupStatus = .idle
         proveStatus = .idle
         verifyStatus = .idle
@@ -249,12 +262,43 @@ final class ProofViewModel {
         isRunning = false
     }
 
+    func runGenerateInput() async {
+        let tbs = "e775f2805fb993e05a208dbff15d1c1"
+        let outPath = workDir.appendingPathComponent("input.json").path
+        guard let certb64 = athIssuerCert else { return }
+        guard let signedResponse = athResponseString else { return  }
+        let issuerCertPath = workDir.appendingPathComponent("MOICA-G3.cer").path
+        print("certb64: \(certb64)")
+        print("signedResponse: \(signedResponse)")
+        print("tbs: \(tbs)")
+        print("issuerCertPath: \(issuerCertPath)")
+        print("outPath: \(outPath)")
+        do {
+            let resultPath = try await Task.detached(priority: .userInitiated) {
+                try generateInputFido(
+                    certb64: certb64,
+                    signedResponse: signedResponse,
+                    tbs: tbs,
+                    issuerCertPath: issuerCertPath,
+                    smtServer: nil,
+                    issuerId: "g2",
+                    outputPath: outPath
+                )
+            }.value
+            generateInputStatus = .success(outPath)
+            let resultJson = try JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: resultPath))) as? [String: Any]
+            print("resultJson: \(resultJson)")
+        } catch {
+            generateInputStatus = .failure(error.localizedDescription)
+        }
+    }
+
     func runSetupKeys() async {
         setupStatus = .running
         let dp = documentsPath, ip = inputPath
         do {
             let msg = try await Task.detached(priority: .userInitiated) {
-                try setupKeys(documentsPath: dp, inputPath: ip)
+                try setupKeysFido(documentsPath: dp, inputPath: ip)
             }.value
             setupStatus = .success(msg)
         } catch {
@@ -267,7 +311,7 @@ final class ProofViewModel {
         let dp = documentsPath, ip = inputPath
         do {
             let result = try await Task.detached(priority: .userInitiated) {
-                try prove(documentsPath: dp, inputPath: ip)
+                try proveFido(documentsPath: dp, inputPath: ip)
             }.value
             proveStatus = .success("\(result.proveMs) ms · \(result.proofSizeBytes) B")
         } catch {
@@ -280,7 +324,7 @@ final class ProofViewModel {
         let dp = documentsPath
         do {
             let valid = try await Task.detached(priority: .userInitiated) {
-                try verify(documentsPath: dp)
+                try verifyFido(documentsPath: dp)
             }.value
             verifyStatus = valid ? .success("Proof is valid") : .failure("Proof is invalid")
         } catch {

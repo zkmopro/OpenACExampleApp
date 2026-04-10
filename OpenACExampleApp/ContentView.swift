@@ -96,7 +96,7 @@ struct ContentView: View {
                             ProgressView().controlSize(.small)
                         } else {
                             Button {
-                                Task { await vm.fetchSPTicket() }
+                                Task { await vm.computeSPTicket() }
                             } label: {
                                 Image(systemName: "arrow.down.circle")
                             }
@@ -173,7 +173,7 @@ struct ContentView: View {
                                 ProgressView().controlSize(.small)
                             } else {
                                 Button {
-                                    Task { await vm.fetchAthResult() }
+                                    Task { await vm.pollAthResult() }
                                 } label: {
                                     Image(systemName: "checkmark.shield")
                                 }
@@ -184,6 +184,56 @@ struct ContentView: View {
                         .padding(.vertical, 4)
                         .animation(.default, value: vm.athResultStatus)
                     }
+
+                    // Row 4 – generate input.json
+                    HStack(spacing: 16) {
+                        Image(systemName: {
+                            switch vm.generateInputStatus {
+                            case .idle, .running: return "doc.badge.gearshape"
+                            case .success:        return "checkmark.circle.fill"
+                            case .failure:        return "xmark.circle.fill"
+                            }
+                        }())
+                        .font(.title2)
+                        .foregroundStyle(spTicketColor(vm.generateInputStatus))
+                        .frame(width: 32)
+
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Generate Input").font(.headline)
+                            Text("Build circuit input from MOICA response").font(.caption).foregroundStyle(.secondary)
+
+                            if case .success(let detail) = vm.generateInputStatus {
+                                Text(detail)
+                                    .font(.caption.monospacedDigit())
+                                    .foregroundStyle(.green)
+                                    .lineLimit(2)
+                                    .truncationMode(.middle)
+                                    .padding(.top, 2)
+                            }
+                            if case .failure(let msg) = vm.generateInputStatus {
+                                Text(msg)
+                                    .font(.caption)
+                                    .foregroundStyle(.red)
+                                    .padding(.top, 2)
+                            }
+                        }
+
+                        Spacer()
+
+                        if case .running = vm.generateInputStatus {
+                            ProgressView().controlSize(.small)
+                        } else {
+                            Button {
+                                Task { await vm.runGenerateInput() }
+                            } label: {
+                                Image(systemName: "arrow.trianglehead.2.clockwise")
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                        }
+                    }
+                    .padding(.vertical, 4)
+                    .animation(.default, value: vm.generateInputStatus)
                 } header: {
                     Text("FIDO / MOICA")
                 }
@@ -194,7 +244,7 @@ struct ContentView: View {
                             subtitle: "Generate proving & verifying keys",
                             status: vm.setupStatus)
                     StepRow(index: 2, title: "Generate Proof",
-                            subtitle: "Prove the RS256 circuit",
+                            subtitle: "Prove the sha256rsa4096 circuit",
                             status: vm.proveStatus)
                     StepRow(index: 3, title: "Verify",
                             subtitle: "Check the proof is valid",
@@ -235,7 +285,7 @@ private struct CircuitDownloadCard: View {
                 .font(.headline)
                 .foregroundStyle(.blue)
 
-            Text("rs256.r1cs (~749 MB) must be downloaded before running the pipeline.")
+            Text("sha256rsa4096.r1cs (~97.43 MB) must be downloaded before running the pipeline.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
 
