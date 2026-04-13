@@ -9,6 +9,7 @@ import SwiftUI
 
 struct ContentView: View {
     @Bindable var vm: ProofViewModel
+    @State private var showAthDetail = false
 
     private var spTicketSymbol: String {
         switch vm.spTicketStatus {
@@ -154,10 +155,24 @@ struct ContentView: View {
                                 Text("POST /fido/ath-result").font(.caption).foregroundStyle(.secondary)
 
                                 if case .success(let detail) = vm.athResultStatus {
-                                    Text(detail)
-                                        .font(.caption.monospacedDigit())
-                                        .foregroundStyle(.green)
-                                        .padding(.top, 2)
+                                    Button {
+                                        showAthDetail.toggle()
+                                    } label: {
+                                        Label(showAthDetail ? "Hide response" : "Show response",
+                                              systemImage: showAthDetail ? "chevron.up" : "chevron.down")
+                                            .font(.caption)
+                                            .foregroundStyle(.green)
+                                    }
+                                    .buttonStyle(.plain)
+                                    .padding(.top, 2)
+
+                                    if showAthDetail {
+                                        Text(detail)
+                                            .font(.caption.monospaced())
+                                            .foregroundStyle(.secondary)
+                                            .textSelection(.enabled)
+                                            .padding(.top, 2)
+                                    }
                                 }
                                 if case .failure(let msg) = vm.athResultStatus {
                                     Text(msg)
@@ -240,15 +255,16 @@ struct ContentView: View {
 
                 // ── Pipeline Steps ─────────────────────────────────────
                 Section {
-                    StepRow(index: 1, title: "Setup Keys",
-                            subtitle: "Generate proving & verifying keys",
-                            status: vm.setupStatus)
-                    StepRow(index: 2, title: "Generate Proof",
-                            subtitle: "Prove the sha256rsa4096 circuit",
-                            status: vm.proveStatus)
-                    StepRow(index: 3, title: "Verify",
+                    StepRow(index: 1, title: "Generate Proof",
+                            subtitle: "Prove the FIDO circuit",
+                            status: vm.proveStatus) {
+                        Task { await vm.runProve() }
+                    }
+                    StepRow(index: 2, title: "Verify",
                             subtitle: "Check the proof is valid",
-                            status: vm.verifyStatus)
+                            status: vm.verifyStatus) {
+                        Task { await vm.runVerify() }
+                    }
                 } header: {
                     Text("Pipeline")
                 }
@@ -285,7 +301,7 @@ private struct CircuitDownloadCard: View {
                 .font(.headline)
                 .foregroundStyle(.blue)
 
-            Text("sha256rsa4096.r1cs (~97.43 MB) must be downloaded before running the pipeline.")
+            Text("sha256rsa4096.r1cs (~92.9 MB), rs256_4096_proving.key (~66.9 MB) must be downloaded before running the pipeline.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
 
@@ -341,6 +357,13 @@ private struct StepRow: View {
     let title: String
     let subtitle: String
     let status: ProofViewModel.StepStatus
+    let action: (() -> Void)?
+
+    init(index: Int, title: String, subtitle: String,
+         status: ProofViewModel.StepStatus, action: (() -> Void)? = nil) {
+        self.index = index; self.title = title; self.subtitle = subtitle
+        self.status = status; self.action = action
+    }
 
     var body: some View {
         HStack(spacing: 16) {
@@ -368,6 +391,12 @@ private struct StepRow: View {
 
             if case .running = status {
                 ProgressView().controlSize(.small)
+            } else if let action {
+                Button(action: action) {
+                    Image(systemName: "play.circle")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
             }
         }
         .padding(.vertical, 4)

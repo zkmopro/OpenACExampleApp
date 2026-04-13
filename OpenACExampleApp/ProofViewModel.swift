@@ -10,6 +10,8 @@ import OpenACSwift
 import ZIPFoundation
 
 private let circuitZipURL = URL(string: "https://pub-ef10768896384fdf9617f26d43e11a65.r2.dev/sha256rsa4096.r1cs.zip")!
+private let provingKeyURL = URL(string: "https://github.com/zkmopro/zkID/releases/download/latest/rs256_4096_proving.key.zip")!
+private let verifyingKeyURL = URL(string: "https://github.com/zkmopro/zkID/releases/download/latest/rs256_4096_verifying.key.zip")!
 
 @Observable
 @MainActor
@@ -34,6 +36,9 @@ final class ProofViewModel {
     var isRunning = false
 
     // Circuit download state
+    var circuitName = "sha256rsa4096.r1cs"
+    var provingKeyName = "rs256_4096_proving.key"
+    var verifyingKeyName = "rs256_4096_verifying.key"
     var circuitReady = false
     var isDownloading = false
     var downloadProgress: Double = 0        // 0.0 – 1.0
@@ -65,7 +70,8 @@ final class ProofViewModel {
             print("copying input.json from \(src) to \(dst.path)")
             try fm.copyItem(atPath: src, toPath: dst.path)
         }
-        circuitReady = fm.fileExists(atPath: workDir.appendingPathComponent("sha256rsa4096.r1cs").path)
+        circuitReady = fm.fileExists(atPath: workDir.appendingPathComponent(circuitName).path)
+            && fm.fileExists(atPath: workDir.appendingPathComponent("keys").appendingPathComponent(provingKeyName).path)
 
         // Copy bundled MOICA-G3.cer into workDir if not already present
         let certDest = workDir.appendingPathComponent("MOICA-G3.cer")
@@ -85,31 +91,49 @@ final class ProofViewModel {
         downloadSeconds = nil
         unzipSeconds = nil
 
-        let tmpZip = FileManager.default.temporaryDirectory
-            .appendingPathComponent("sha256rsa4096.r1cs.zip")
-        let destDir = workDir
+        let tmpR1cs = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(circuitName).zip")
+        let tmpKey = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(provingKeyName).zip")
+        let r1csDestDir = workDir
+        let keysDestDir = workDir.appendingPathComponent("keys", isDirectory: true)
+
+        // Capture progress updater on the main actor before entering the detached task.
+        // Inside Task.detached, self is @MainActor-isolated and unreachable, so
+        // [weak self] inside a nested Task would always be nil without this capture.
+        let setProgress: @Sendable (Double) -> Void = { [weak self] p in
+            Task { @MainActor [weak self] in self?.downloadProgress = p }
+        }
 
         do {
+            try FileManager.default.createDirectory(at: keysDestDir, withIntermediateDirectories: true)
             // Run download + unzip off the main actor so the UI stays live.
             let (dl, unzip) = try await Task.detached(priority: .userInitiated) {
                 let t0 = Date()
-                try await Self.downloadFile(from: circuitZipURL, to: tmpZip) { progress in
-                    Task { @MainActor [weak self] in
-                        self?.downloadProgress = progress
-                    }
+
+                // Download r1cs (progress 0.0–0.5)
+                try await Self.downloadFile(from: circuitZipURL, to: tmpR1cs) { p in
+                    setProgress(p * 0.5)
+                }
+
+                // Download proving key (progress 0.5–1.0)
+                try await Self.downloadFile(from: provingKeyURL, to: tmpKey) { p in
+                    setProgress(0.5 + p * 0.5)
                 }
                 let downloadTime = Date().timeIntervalSince(t0)
 
                 let t1 = Date()
-                let archive = try Archive(url: tmpZip, accessMode: .read)
-                for entry in archive where entry.type == .file {
-                    let dest = destDir.appendingPathComponent(entry.path)
-                    if FileManager.default.fileExists(atPath: dest.path) {
-                        try FileManager.default.removeItem(at: dest)
+                for (tmpZip, destDir) in [(tmpR1cs, r1csDestDir), (tmpKey, keysDestDir)] {
+                    let archive = try Archive(url: tmpZip, accessMode: .read)
+                    for entry in archive where entry.type == .file {
+                        let dest = destDir.appendingPathComponent(entry.path)
+                        if FileManager.default.fileExists(atPath: dest.path) {
+                            try FileManager.default.removeItem(at: dest)
+                        }
+                        _ = try archive.extract(entry, to: dest)
                     }
-                    _ = try archive.extract(entry, to: dest)
+                    try? FileManager.default.removeItem(at: tmpZip)
                 }
-                try? FileManager.default.removeItem(at: tmpZip)
                 let unzipTime = Date().timeIntervalSince(t1)
 
                 return (downloadTime, unzipTime)
@@ -118,9 +142,8 @@ final class ProofViewModel {
             downloadSeconds = dl
             unzipSeconds = unzip
 
-            circuitReady = FileManager.default.fileExists(
-                atPath: workDir.appendingPathComponent("sha256rsa4096.r1cs").path
-            )
+            circuitReady = FileManager.default.fileExists(atPath: workDir.appendingPathComponent(circuitName).path)
+                && FileManager.default.fileExists(atPath: workDir.appendingPathComponent("keys").appendingPathComponent(provingKeyName).path)
         } catch {
             downloadError = error.localizedDescription
         }
@@ -131,14 +154,18 @@ final class ProofViewModel {
     private static func downloadFile(
         from url: URL,
         to destination: URL,
-        progress: @escaping (Double) -> Void
+        progress: @escaping @Sendable (Double) -> Void
     ) async throws {
-        let delegate = DownloadProgressDelegate(onProgress: progress)
-        let session = URLSession(configuration: .default, delegate: delegate, delegateQueue: nil)
-        defer { session.invalidateAndCancel() }
-        let (tmpURL, _) = try await session.download(from: url, delegate: delegate)
-        try? FileManager.default.removeItem(at: destination)
-        try FileManager.default.moveItem(at: tmpURL, to: destination)
+        try await withCheckedThrowingContinuation { continuation in
+            let delegate = DownloadTaskDelegate(
+                destination: destination,
+                onProgress: progress,
+                onCompletion: { continuation.resume(with: $0) }
+            )
+            let session = URLSession(configuration: .default, delegate: delegate, delegateQueue: nil)
+            delegate.session = session
+            session.downloadTask(with: url).resume()
+        }
     }
 
     // MARK: - SP Ticket / MOICA
@@ -157,6 +184,7 @@ final class ProofViewModel {
     var athIssuerCert: String?
     var athIssuerId: String = "g2"
     var generateInputStatus: StepStatus = .idle
+    var generatedInputPath: String?
 
 
     func computeSPTicket() async {
@@ -242,6 +270,7 @@ final class ProofViewModel {
 
     func reset() {
         generateInputStatus = .idle
+        generatedInputPath = nil
         setupStatus = .idle
         proveStatus = .idle
         verifyStatus = .idle
@@ -252,13 +281,10 @@ final class ProofViewModel {
         isRunning = true
         reset()
 
-        await runSetupKeys()
-        guard setupStatus.isSuccess else { isRunning = false; return }
-
-        await runProve()
+        await _runProve()
         guard proveStatus.isSuccess else { isRunning = false; return }
 
-        await runVerify()
+        await _runVerify()
         isRunning = false
     }
 
@@ -285,7 +311,8 @@ final class ProofViewModel {
                     outputPath: outPath
                 )
             }.value
-            generateInputStatus = .success(outPath)
+            generatedInputPath = resultPath
+            generateInputStatus = .success(resultPath)
             let resultJson = try JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: resultPath))) as? [String: Any]
             print("resultJson: \(resultJson)")
         } catch {
@@ -307,8 +334,25 @@ final class ProofViewModel {
     }
 
     func runProve() async {
+        guard !isRunning else { return }
+        isRunning = true
+        proveStatus = .idle
+        await _runProve()
+        isRunning = false
+    }
+
+    func runVerify() async {
+        guard !isRunning else { return }
+        isRunning = true
+        verifyStatus = .idle
+        await _runVerify()
+        isRunning = false
+    }
+
+    private func _runProve() async {
         proveStatus = .running
-        let dp = documentsPath, ip = inputPath
+        let dp = documentsPath
+        let ip = generatedInputPath ?? inputPath
         do {
             let result = try await Task.detached(priority: .userInitiated) {
                 try proveFido(documentsPath: dp, inputPath: ip)
@@ -319,8 +363,35 @@ final class ProofViewModel {
         }
     }
 
-    func runVerify() async {
+    private func _runVerify() async {
         verifyStatus = .running
+
+        // Download verifying key on demand if not already present
+        let keysDir = workDir.appendingPathComponent("keys", isDirectory: true)
+        let verifyingKeyDest = keysDir.appendingPathComponent(verifyingKeyName)
+        if !FileManager.default.fileExists(atPath: verifyingKeyDest.path) {
+            let tmpVerifyingKey = FileManager.default.temporaryDirectory
+                .appendingPathComponent("\(verifyingKeyName).zip")
+            do {
+                try FileManager.default.createDirectory(at: keysDir, withIntermediateDirectories: true)
+                try await Task.detached(priority: .userInitiated) {
+                    try await Self.downloadFile(from: verifyingKeyURL, to: tmpVerifyingKey) { _ in }
+                    let archive = try Archive(url: tmpVerifyingKey, accessMode: .read)
+                    for entry in archive where entry.type == .file {
+                        let dest = keysDir.appendingPathComponent(entry.path)
+                        if FileManager.default.fileExists(atPath: dest.path) {
+                            try FileManager.default.removeItem(at: dest)
+                        }
+                        _ = try archive.extract(entry, to: dest)
+                    }
+                    try? FileManager.default.removeItem(at: tmpVerifyingKey)
+                }.value
+            } catch {
+                verifyStatus = .failure("Failed to download verifying key: \(error.localizedDescription)")
+                return
+            }
+        }
+
         let dp = documentsPath
         do {
             let valid = try await Task.detached(priority: .userInitiated) {
@@ -335,11 +406,19 @@ final class ProofViewModel {
 
 // MARK: - Download Delegate
 
-private final class DownloadProgressDelegate: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
-    let onProgress: (Double) -> Void
+private final class DownloadTaskDelegate: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
+    private let destination: URL
+    private let onProgress: @Sendable (Double) -> Void
+    private let onCompletion: (Result<Void, Error>) -> Void
+    private var finished = false
+    var session: URLSession?
 
-    init(onProgress: @escaping (Double) -> Void) {
+    init(destination: URL,
+         onProgress: @escaping @Sendable (Double) -> Void,
+         onCompletion: @escaping (Result<Void, Error>) -> Void) {
+        self.destination = destination
         self.onProgress = onProgress
+        self.onCompletion = onCompletion
     }
 
     func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask,
@@ -349,7 +428,24 @@ private final class DownloadProgressDelegate: NSObject, URLSessionDownloadDelega
         onProgress(Double(totalBytesWritten) / Double(total))
     }
 
-    // Required by the protocol but handled by the async/await continuation.
     func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask,
-                    didFinishDownloadingTo location: URL) {}
+                    didFinishDownloadingTo location: URL) {
+        guard !finished else { return }
+        finished = true
+        do {
+            try? FileManager.default.removeItem(at: destination)
+            try FileManager.default.moveItem(at: location, to: destination)
+            onCompletion(.success(()))
+        } catch {
+            onCompletion(.failure(error))
+        }
+        self.session?.finishTasksAndInvalidate()
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        guard let error, !finished else { return }
+        finished = true
+        onCompletion(.failure(error))
+        self.session?.finishTasksAndInvalidate()
+    }
 }
