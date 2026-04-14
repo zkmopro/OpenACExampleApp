@@ -9,9 +9,14 @@ import SwiftUI
 
 @main
 struct OpenACExampleAppApp: App {
+    @State private var vm = ProofViewModel()
+
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            ContentView(vm: vm)
+                .onOpenURL { url in
+                    vm.handleCallback(url: url)
+                }
         }
     }
 }
