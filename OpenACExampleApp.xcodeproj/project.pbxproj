@@ -7,8 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		2A0AC1A12F8357FD00D0ECE4 /* ZIPFoundation in Frameworks */ = {isa = PBXBuildFile; productRef = 2A0AC1A02F8357FD00D0ECE4 /* ZIPFoundation */; };
-		2A0AC2172F83611600D0ECE4 /* OpenACSwift in Frameworks */ = {isa = PBXBuildFile; productRef = 2A0AC2162F83611600D0ECE4 /* OpenACSwift */; };
+		2A2E0EB32F868AE100CA4529 /* ZIPFoundation in Frameworks */ = {isa = PBXBuildFile; productRef = 2A2E0EB22F868AE100CA4529 /* ZIPFoundation */; };
+		2A372AE22F8DE30E003BE776 /* OpenACSwift in Frameworks */ = {isa = PBXBuildFile; productRef = 2A372AE12F8DE30E003BE776 /* OpenACSwift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -57,8 +57,8 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				2A0AC2172F83611600D0ECE4 /* OpenACSwift in Frameworks */,
-				2A0AC1A12F8357FD00D0ECE4 /* ZIPFoundation in Frameworks */,
+				2A372AE22F8DE30E003BE776 /* OpenACSwift in Frameworks */,
+				2A2E0EB32F868AE100CA4529 /* ZIPFoundation in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -119,8 +119,8 @@
 			);
 			name = OpenACExampleApp;
 			packageProductDependencies = (
-				2A0AC1A02F8357FD00D0ECE4 /* ZIPFoundation */,
-				2A0AC2162F83611600D0ECE4 /* OpenACSwift */,
+				2A2E0EB22F868AE100CA4529 /* ZIPFoundation */,
+				2A372AE12F8DE30E003BE776 /* OpenACSwift */,
 			);
 			productName = OpenACExampleApp;
 			productReference = 2AE67C222F823BFE00250118 /* OpenACExampleApp.app */;
@@ -205,8 +205,8 @@
 			mainGroup = 2AE67C192F823BFE00250118;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
-				2A0AC19F2F8357FD00D0ECE4 /* XCRemoteSwiftPackageReference "ZIPFoundation" */,
-				2A0AC2152F83611600D0ECE4 /* XCRemoteSwiftPackageReference "OpenACSwift" */,
+				2A2E0EB12F868AE100CA4529 /* XCRemoteSwiftPackageReference "ZIPFoundation" */,
+				2A372AE02F8DE30E003BE776 /* XCRemoteSwiftPackageReference "OpenACSwift" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 2AE67C232F823BFE00250118 /* Products */;
@@ -581,7 +581,7 @@
 /* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */
-		2A0AC19F2F8357FD00D0ECE4 /* XCRemoteSwiftPackageReference "ZIPFoundation" */ = {
+		2A2E0EB12F868AE100CA4529 /* XCRemoteSwiftPackageReference "ZIPFoundation" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/weichsel/ZIPFoundation";
 			requirement = {
@@ -589,7 +589,7 @@
 				minimumVersion = 0.9.20;
 			};
 		};
-		2A0AC2152F83611600D0ECE4 /* XCRemoteSwiftPackageReference "OpenACSwift" */ = {
+		2A372AE02F8DE30E003BE776 /* XCRemoteSwiftPackageReference "OpenACSwift" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/zkmopro/OpenACSwift";
 			requirement = {
@@ -600,14 +600,14 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
-		2A0AC1A02F8357FD00D0ECE4 /* ZIPFoundation */ = {
+		2A2E0EB22F868AE100CA4529 /* ZIPFoundation */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 2A0AC19F2F8357FD00D0ECE4 /* XCRemoteSwiftPackageReference "ZIPFoundation" */;
+			package = 2A2E0EB12F868AE100CA4529 /* XCRemoteSwiftPackageReference "ZIPFoundation" */;
 			productName = ZIPFoundation;
 		};
-		2A0AC2162F83611600D0ECE4 /* OpenACSwift */ = {
+		2A372AE12F8DE30E003BE776 /* OpenACSwift */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 2A0AC2152F83611600D0ECE4 /* XCRemoteSwiftPackageReference "OpenACSwift" */;
+			package = 2A372AE02F8DE30E003BE776 /* XCRemoteSwiftPackageReference "OpenACSwift" */;
 			productName = OpenACSwift;
 		};
 /* End XCSwiftPackageProductDependency section */
