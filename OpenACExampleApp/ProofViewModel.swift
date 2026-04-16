@@ -12,6 +12,7 @@ import ZIPFoundation
 private let circuitZipURL = URL(string: "https://github.com/zkmopro/zkID/releases/download/latest/sha256rsa4096.r1cs.zip")!
 private let provingKeyURL = URL(string: "https://github.com/zkmopro/zkID/releases/download/latest/rs256_4096_proving.key.zip")!
 private let verifyingKeyURL = URL(string: "https://github.com/zkmopro/zkID/releases/download/latest/rs256_4096_verifying.key.zip")!
+private let serverURL = URL(string: "https://aff7-211-75-7-191.ngrok-free.app/challenge")!
 
 @Observable
 @MainActor
@@ -105,25 +106,43 @@ final class ProofViewModel {
             Task { @MainActor [weak self] in self?.downloadProgress = p }
         }
 
+        let r1csExists = FileManager.default.fileExists(atPath: workDir.appendingPathComponent(circuitName).path)
+        let keyExists  = FileManager.default.fileExists(atPath: workDir.appendingPathComponent("keys").appendingPathComponent(provingKeyName).path)
+
+        if r1csExists && keyExists {
+            circuitReady = true
+            isDownloading = false
+            return
+        }
+
         do {
             try FileManager.default.createDirectory(at: keysDestDir, withIntermediateDirectories: true)
             // Run download + unzip off the main actor so the UI stays live.
             let (dl, unzip) = try await Task.detached(priority: .userInitiated) {
                 let t0 = Date()
 
-                // Download r1cs (progress 0.0–0.5)
-                try await Self.downloadFile(from: circuitZipURL, to: tmpR1cs) { p in
-                    setProgress(p * 0.5)
+                // Download r1cs (progress 0.0–0.5) only if missing
+                if !r1csExists {
+                    try await Self.downloadFile(from: circuitZipURL, to: tmpR1cs) { p in
+                        setProgress(p * 0.5)
+                    }
+                } else {
+                    setProgress(0.5)
                 }
 
-                // Download proving key (progress 0.5–1.0)
-                try await Self.downloadFile(from: provingKeyURL, to: tmpKey) { p in
-                    setProgress(0.5 + p * 0.5)
+                // Download proving key (progress 0.5–1.0) only if missing
+                if !keyExists {
+                    try await Self.downloadFile(from: provingKeyURL, to: tmpKey) { p in
+                        setProgress(0.5 + p * 0.5)
+                    }
+                } else {
+                    setProgress(1.0)
                 }
                 let downloadTime = Date().timeIntervalSince(t0)
 
                 let t1 = Date()
-                for (tmpZip, destDir) in [(tmpR1cs, r1csDestDir), (tmpKey, keysDestDir)] {
+                for (tmpZip, destDir, exists) in [(tmpR1cs, r1csDestDir, r1csExists), (tmpKey, keysDestDir, keyExists)] {
+                    guard !exists else { continue }
                     let archive = try Archive(url: tmpZip, accessMode: .read)
                     for entry in archive where entry.type == .file {
                         let dest = destDir.appendingPathComponent(entry.path)
@@ -176,8 +195,35 @@ final class ProofViewModel {
     var idNum: String = "A123456789"
     var spTicketStatus: StepStatus = .idle
     var spTicket: String?
-    var tbs: String = "e775f2805fb993e05a208dbff15d1c1"
+    var tbs: String = ""
+    var challengeId: String = ""
     var rtnVal: String?
+
+    var tbsStatus: StepStatus = .idle
+
+    func regenerateTBS() async {
+        tbsStatus = .running
+        do {
+            var request = URLRequest(url: serverURL)
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.setValue("true", forHTTPHeaderField: "ngrok-skip-browser-warning")
+            request.httpBody = Data("{}".utf8)
+            let (data, _) = try await URLSession.shared.data(for: request)
+            let raw = String(data: data, encoding: .utf8) ?? ""
+            print("regenerateTBS raw response: \(raw)")
+            let json = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+            guard let challengeBytes = json["challenge_bytes"] as? String else {
+                throw URLError(.cannotParseResponse)
+            }
+            tbs = challengeBytes
+            challengeId = json["challenge_id"] as? String ?? ""
+            tbsStatus = .success("challenge received")
+        } catch {
+            tbsStatus = .failure(error.localizedDescription)
+            print("regenerateTBS error: \(error)")
+        }
+    }
 
     // Stored ath-result fields used to generate circuit input
     var athResponseString: String?
@@ -192,6 +238,7 @@ final class ProofViewModel {
         spTicket = nil
         rtnVal = nil
         do {
+            print("tbs: \(tbs)")
             let raw = try await getSpTicket(params: SpTicketParams(
                 transactionID: UUID().uuidString,
                 idNum:         idNum,

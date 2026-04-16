@@ -39,7 +39,7 @@ struct ContentView: View {
         NavigationStack {
             List {
                 // ── Circuit Download ───────────────────────────────────
-                if !vm.circuitReady || vm.downloadSeconds != nil {
+                if !vm.circuitReady {
                     Section {
                         CircuitDownloadCard(vm: vm)
                     } header: {
@@ -55,6 +55,32 @@ struct ContentView: View {
                             .font(.subheadline)
                         SecureField("e.g. A123456789", text: $vm.idNum)
                             .textFieldStyle(.roundedBorder)
+                    }
+
+                    // Row 0b – TBS input
+                    HStack {
+                        Text("TBS")
+                            .font(.subheadline)
+                        TextField("To-be-signed data", text: $vm.tbs)
+                            .textFieldStyle(.roundedBorder)
+                        Button {
+                            Task { await vm.regenerateTBS() }
+                        } label: {
+                            Group {
+                                if case .running = vm.tbsStatus {
+                                    ProgressView().controlSize(.small)
+                                } else {
+                                    Image(systemName: "arrow.clockwise")
+                                }
+                            }
+                        }
+                        .buttonStyle(.borderless)
+                        .disabled(vm.tbsStatus == .running)
+                    }
+                    if case .failure(let msg) = vm.tbsStatus {
+                        Text(msg)
+                            .font(.caption)
+                            .foregroundStyle(.red)
                     }
 
                     // Row 1 – fetch ticket
