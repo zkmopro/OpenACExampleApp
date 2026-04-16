@@ -1,5 +1,5 @@
 {
-  "originHash" : "64f766c5b3795febb61332298f0353344a50595564982950c93df67da9cf33cf",
+  "originHash" : "70e522a2a17894d0b29cd5fe3e28c57d1952ecc54b7dd60df65f7e328384ef2f",
   "pins" : [
     {
       "identity" : "openacswift",
@@ -7,7 +7,7 @@
       "location" : "https://github.com/zkmopro/OpenACSwift",
       "state" : {
         "branch" : "main",
-        "revision" : "8ae8162b39433bc6642a5aa699b1cc301d71b01f"
+        "revision" : "8626e0271a7c63df6e39bbf428dcb251fc23f00c"
       }
     },
     {
