@@ -9,7 +9,7 @@ import UIKit
 import OpenACSwift
 import ZIPFoundation
 
-private let circuitZipURL = URL(string: "https://pub-ef10768896384fdf9617f26d43e11a65.r2.dev/sha256rsa4096.r1cs.zip")!
+private let circuitZipURL = URL(string: "https://github.com/zkmopro/zkID/releases/download/latest/sha256rsa4096.r1cs.zip")!
 private let provingKeyURL = URL(string: "https://github.com/zkmopro/zkID/releases/download/latest/rs256_4096_proving.key.zip")!
 private let verifyingKeyURL = URL(string: "https://github.com/zkmopro/zkID/releases/download/latest/rs256_4096_verifying.key.zip")!
 
@@ -176,7 +176,7 @@ final class ProofViewModel {
     var idNum: String = "A123456789"
     var spTicketStatus: StepStatus = .idle
     var spTicket: String?
-    var tbs: String?
+    var tbs: String = "e775f2805fb993e05a208dbff15d1c1"
     var rtnVal: String?
 
     // Stored ath-result fields used to generate circuit input
@@ -199,7 +199,7 @@ final class ProofViewModel {
                 opMode:        "APP2APP",
                 hint:          "待簽署資料",
                 timeLimit:     "600",
-                signData:      "ZTc3NWYyODA1ZmI5OTNlMDVhMjA4ZGJmZjE1ZDFjMQ==",
+                signData:      Data(tbs.utf8).base64EncodedString(),
                 signType:      "PKCS#1",
                 hashAlgorithm: "SHA256",
                 tbsEncoding:   "base64"
@@ -289,7 +289,6 @@ final class ProofViewModel {
     }
 
     func runGenerateInput() async {
-        let tbs = "e775f2805fb993e05a208dbff15d1c1"
         let outPath = workDir.appendingPathComponent("input.json").path
         guard let certb64 = athIssuerCert else { return }
         guard let signedResponse = athResponseString else { return  }
@@ -301,10 +300,10 @@ final class ProofViewModel {
         print("outPath: \(outPath)")
         do {
             let resultPath = try await Task.detached(priority: .userInitiated) {
-                try generateInputFido(
+                try await generateInputFido(
                     certb64: certb64,
                     signedResponse: signedResponse,
-                    tbs: tbs,
+                    tbs: self.tbs,
                     issuerCertPath: issuerCertPath,
                     smtServer: nil,
                     issuerId: "g2",
