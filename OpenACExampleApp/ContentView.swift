@@ -327,7 +327,7 @@ private struct CircuitDownloadCard: View {
                 .font(.headline)
                 .foregroundStyle(.blue)
 
-            Text("cert_chain_rs4096.r1cs, cert_chain_rs4096_proving.key, device_sig_rs2048.r1cs, and device_sig_rs2048_proving.key must be downloaded before running the pipeline.")
+            Text("cert_chain_rs4096_proving.key and device_sig_rs2048_proving.key must be downloaded before running the pipeline.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
 

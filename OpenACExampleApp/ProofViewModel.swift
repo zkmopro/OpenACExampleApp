@@ -9,10 +9,8 @@ import UIKit
 import zlib
 import OpenACSwift
 
-private let certChainR1csURL         = URL(string: "https://github.com/zkmopro/zkID/releases/download/latest/cert_chain_rs4096.r1cs.gz")!
 private let certChainProvingKeyURL   = URL(string: "https://github.com/zkmopro/zkID/releases/download/latest/cert_chain_rs4096_proving.key.gz")!
 private let certChainVerifyingKeyURL = URL(string: "https://github.com/zkmopro/zkID/releases/download/latest/cert_chain_rs4096_verifying.key.gz")!
-private let deviceSigR1csURL         = URL(string: "https://github.com/zkmopro/zkID/releases/download/latest/device_sig_rs2048.r1cs.gz")!
 private let deviceSigProvingKeyURL   = URL(string: "https://github.com/zkmopro/zkID/releases/download/latest/device_sig_rs2048_proving.key.gz")!
 private let deviceSigVerifyingKeyURL = URL(string: "https://github.com/zkmopro/zkID/releases/download/latest/device_sig_rs2048_verifying.key.gz")!
 private let serverURL = URL(string: "https://aff7-211-75-7-191.ngrok-free.app/challenge")!
@@ -40,10 +38,8 @@ final class ProofViewModel {
     var isRunning = false
 
     // Circuit file names
-    let certChainR1csName         = "cert_chain_rs4096.r1cs"
     let certChainProvingKeyName   = "cert_chain_rs4096_proving.key"
     let certChainVerifyingKeyName = "cert_chain_rs4096_verifying.key"
-    let deviceSigR1csName         = "device_sig_rs2048.r1cs"
     let deviceSigProvingKeyName   = "device_sig_rs2048_proving.key"
     let deviceSigVerifyingKeyName = "device_sig_rs2048_verifying.key"
     var circuitReady = false
@@ -78,9 +74,7 @@ final class ProofViewModel {
             try fm.copyItem(atPath: src, toPath: dst.path)
         }
         let keysDir = workDir.appendingPathComponent("keys")
-        circuitReady = fm.fileExists(atPath: workDir.appendingPathComponent(certChainR1csName).path)
-            && fm.fileExists(atPath: keysDir.appendingPathComponent(certChainProvingKeyName).path)
-            && fm.fileExists(atPath: workDir.appendingPathComponent(deviceSigR1csName).path)
+        circuitReady = fm.fileExists(atPath: keysDir.appendingPathComponent(certChainProvingKeyName).path)
             && fm.fileExists(atPath: keysDir.appendingPathComponent(deviceSigProvingKeyName).path)
 
         // Copy bundled MOICA-G3.cer into workDir if not already present
@@ -104,12 +98,10 @@ final class ProofViewModel {
         let fm = FileManager.default
         let keysDestDir = workDir.appendingPathComponent("keys", isDirectory: true)
 
-        let certR1csExists  = fm.fileExists(atPath: workDir.appendingPathComponent(certChainR1csName).path)
-        let certKeyExists   = fm.fileExists(atPath: keysDestDir.appendingPathComponent(certChainProvingKeyName).path)
-        let devR1csExists   = fm.fileExists(atPath: workDir.appendingPathComponent(deviceSigR1csName).path)
-        let devKeyExists    = fm.fileExists(atPath: keysDestDir.appendingPathComponent(deviceSigProvingKeyName).path)
+        let certKeyExists = fm.fileExists(atPath: keysDestDir.appendingPathComponent(certChainProvingKeyName).path)
+        let devKeyExists  = fm.fileExists(atPath: keysDestDir.appendingPathComponent(deviceSigProvingKeyName).path)
 
-        if certR1csExists && certKeyExists && devR1csExists && devKeyExists {
+        if certKeyExists && devKeyExists {
             circuitReady = true
             isDownloading = false
             return
@@ -120,56 +112,40 @@ final class ProofViewModel {
         }
 
         // Capture URL and name constants for use in detached task
-        let certR1csURL    = certChainR1csURL
-        let certKeyURL     = certChainProvingKeyURL
-        let devR1csURL     = deviceSigR1csURL
-        let devKeyURL      = deviceSigProvingKeyURL
-        let certR1csName   = certChainR1csName
-        let certKeyName    = certChainProvingKeyName
-        let devR1csName    = deviceSigR1csName
-        let devKeyName     = deviceSigProvingKeyName
-        let r1csDir        = workDir
-        let tmpDir         = fm.temporaryDirectory
+        let certKeyURL  = certChainProvingKeyURL
+        let devKeyURL   = deviceSigProvingKeyURL
+        let certKeyName = certChainProvingKeyName
+        let devKeyName  = deviceSigProvingKeyName
+        let tmpDir      = fm.temporaryDirectory
 
         do {
-            try fm.createDirectory(at: workDir, withIntermediateDirectories: true)
             try fm.createDirectory(at: keysDestDir, withIntermediateDirectories: true)
 
-            let (dl, unzip) = try await Task.detached(priority: .userInitiated) {
+            let dl = try await Task.detached(priority: .userInitiated) {
                 let t0 = Date()
 
-                // 4 files, 25% progress each: certR1cs, certKey, devR1cs, devKey
-                let jobs: [(URL, URL, Bool, String)] = [
-                    (certR1csURL,  r1csDir,      certR1csExists, certR1csName),
-                    (certKeyURL,   keysDestDir,  certKeyExists,  certKeyName),
-                    (devR1csURL,   r1csDir,      devR1csExists,  devR1csName),
-                    (devKeyURL,    keysDestDir,  devKeyExists,   devKeyName),
+                // 2 proving keys, 50% progress each
+                let jobs: [(URL, Bool, String)] = [
+                    (certKeyURL, certKeyExists, certKeyName),
+                    (devKeyURL,  devKeyExists,  devKeyName),
                 ]
-
-                for (i, (remoteURL, destDir, alreadyExists, fileName)) in jobs.enumerated() {
-                    let base = Double(i) * 0.25
-                    if alreadyExists {
-                        setProgress(base + 0.25)
-                        continue
-                    }
+                for (i, (remoteURL, alreadyExists, fileName)) in jobs.enumerated() {
+                    let base = Double(i) * 0.5
+                    if alreadyExists { setProgress(base + 0.5); continue }
                     let tmp = tmpDir.appendingPathComponent("\(fileName).gz")
                     try await Self.downloadFile(from: remoteURL, to: tmp) { p in
-                        setProgress(base + p * 0.25)
+                        setProgress(base + p * 0.5)
                     }
-                    let dest = destDir.appendingPathComponent(fileName)
-                    try await Self.decompressGz(from: tmp, to: dest)
+                    let dest = keysDestDir.appendingPathComponent(fileName)
+                    try Self.decompressGz(from: tmp, to: dest)
                 }
-
-                let downloadTime = Date().timeIntervalSince(t0)
-                return (downloadTime, 0.0)
+                return Date().timeIntervalSince(t0)
             }.value
 
             downloadSeconds = dl
-            unzipSeconds = unzip > 0 ? unzip : nil
+            unzipSeconds = nil
 
-            circuitReady = fm.fileExists(atPath: workDir.appendingPathComponent(certChainR1csName).path)
-                && fm.fileExists(atPath: keysDestDir.appendingPathComponent(certChainProvingKeyName).path)
-                && fm.fileExists(atPath: workDir.appendingPathComponent(deviceSigR1csName).path)
+            circuitReady = fm.fileExists(atPath: keysDestDir.appendingPathComponent(certChainProvingKeyName).path)
                 && fm.fileExists(atPath: keysDestDir.appendingPathComponent(deviceSigProvingKeyName).path)
         } catch {
             downloadError = error.localizedDescription
@@ -178,7 +154,7 @@ final class ProofViewModel {
         isDownloading = false
     }
 
-    private static func decompressGz(from gzURL: URL, to destination: URL) throws {
+    private nonisolated static func decompressGz(from gzURL: URL, to destination: URL) throws {
         guard let gz = gzopen(gzURL.path, "rb") else {
             throw NSError(domain: "GzipDecompressError", code: 1,
                           userInfo: [NSLocalizedDescriptionKey: "Cannot open: \(gzURL.lastPathComponent)"])
