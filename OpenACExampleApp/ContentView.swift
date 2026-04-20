@@ -276,13 +276,13 @@ struct ContentView: View {
                     .padding(.vertical, 4)
                     .animation(.default, value: vm.generateInputStatus)
                 } header: {
-                    Text("FIDO / MOICA")
+                    Text("TW FidO / MOICA")
                 }
 
                 // ── Pipeline Steps ─────────────────────────────────────
                 Section {
                     StepRow(index: 1, title: "Generate Proof",
-                            subtitle: "Prove the FIDO circuit",
+                            subtitle: "Prove the TW FidO circuit",
                             status: vm.proveStatus) {
                         Task { await vm.runProve() }
                     }
@@ -327,7 +327,7 @@ private struct CircuitDownloadCard: View {
                 .font(.headline)
                 .foregroundStyle(.blue)
 
-            Text("sha256rsa4096.r1cs (~92.9 MB), rs256_4096_proving.key (~66.9 MB) must be downloaded before running the pipeline.")
+            Text("cert_chain_rs4096.r1cs, cert_chain_rs4096_proving.key, device_sig_rs2048.r1cs, and device_sig_rs2048_proving.key must be downloaded before running the pipeline.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
 

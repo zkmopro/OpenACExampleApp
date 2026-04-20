@@ -6,12 +6,15 @@
 import Foundation
 import Observation
 import UIKit
+import zlib
 import OpenACSwift
-import ZIPFoundation
 
-private let circuitZipURL = URL(string: "https://github.com/zkmopro/zkID/releases/download/latest/sha256rsa4096.r1cs.zip")!
-private let provingKeyURL = URL(string: "https://github.com/zkmopro/zkID/releases/download/latest/rs256_4096_proving.key.zip")!
-private let verifyingKeyURL = URL(string: "https://github.com/zkmopro/zkID/releases/download/latest/rs256_4096_verifying.key.zip")!
+private let certChainR1csURL         = URL(string: "https://github.com/zkmopro/zkID/releases/download/latest/cert_chain_rs4096.r1cs.gz")!
+private let certChainProvingKeyURL   = URL(string: "https://github.com/zkmopro/zkID/releases/download/latest/cert_chain_rs4096_proving.key.gz")!
+private let certChainVerifyingKeyURL = URL(string: "https://github.com/zkmopro/zkID/releases/download/latest/cert_chain_rs4096_verifying.key.gz")!
+private let deviceSigR1csURL         = URL(string: "https://github.com/zkmopro/zkID/releases/download/latest/device_sig_rs2048.r1cs.gz")!
+private let deviceSigProvingKeyURL   = URL(string: "https://github.com/zkmopro/zkID/releases/download/latest/device_sig_rs2048_proving.key.gz")!
+private let deviceSigVerifyingKeyURL = URL(string: "https://github.com/zkmopro/zkID/releases/download/latest/device_sig_rs2048_verifying.key.gz")!
 private let serverURL = URL(string: "https://aff7-211-75-7-191.ngrok-free.app/challenge")!
 
 @Observable
@@ -36,10 +39,13 @@ final class ProofViewModel {
     var verifyStatus: StepStatus = .idle
     var isRunning = false
 
-    // Circuit download state
-    var circuitName = "sha256rsa4096.r1cs"
-    var provingKeyName = "rs256_4096_proving.key"
-    var verifyingKeyName = "rs256_4096_verifying.key"
+    // Circuit file names
+    let certChainR1csName         = "cert_chain_rs4096.r1cs"
+    let certChainProvingKeyName   = "cert_chain_rs4096_proving.key"
+    let certChainVerifyingKeyName = "cert_chain_rs4096_verifying.key"
+    let deviceSigR1csName         = "device_sig_rs2048.r1cs"
+    let deviceSigProvingKeyName   = "device_sig_rs2048_proving.key"
+    let deviceSigVerifyingKeyName = "device_sig_rs2048_verifying.key"
     var circuitReady = false
     var isDownloading = false
     var downloadProgress: Double = 0        // 0.0 – 1.0
@@ -71,8 +77,11 @@ final class ProofViewModel {
             print("copying input.json from \(src) to \(dst.path)")
             try fm.copyItem(atPath: src, toPath: dst.path)
         }
-        circuitReady = fm.fileExists(atPath: workDir.appendingPathComponent(circuitName).path)
-            && fm.fileExists(atPath: workDir.appendingPathComponent("keys").appendingPathComponent(provingKeyName).path)
+        let keysDir = workDir.appendingPathComponent("keys")
+        circuitReady = fm.fileExists(atPath: workDir.appendingPathComponent(certChainR1csName).path)
+            && fm.fileExists(atPath: keysDir.appendingPathComponent(certChainProvingKeyName).path)
+            && fm.fileExists(atPath: workDir.appendingPathComponent(deviceSigR1csName).path)
+            && fm.fileExists(atPath: keysDir.appendingPathComponent(deviceSigProvingKeyName).path)
 
         // Copy bundled MOICA-G3.cer into workDir if not already present
         let certDest = workDir.appendingPathComponent("MOICA-G3.cer")
@@ -92,82 +101,108 @@ final class ProofViewModel {
         downloadSeconds = nil
         unzipSeconds = nil
 
-        let tmpR1cs = FileManager.default.temporaryDirectory
-            .appendingPathComponent("\(circuitName).zip")
-        let tmpKey = FileManager.default.temporaryDirectory
-            .appendingPathComponent("\(provingKeyName).zip")
-        let r1csDestDir = workDir
+        let fm = FileManager.default
         let keysDestDir = workDir.appendingPathComponent("keys", isDirectory: true)
 
-        // Capture progress updater on the main actor before entering the detached task.
-        // Inside Task.detached, self is @MainActor-isolated and unreachable, so
-        // [weak self] inside a nested Task would always be nil without this capture.
-        let setProgress: @Sendable (Double) -> Void = { [weak self] p in
-            Task { @MainActor [weak self] in self?.downloadProgress = p }
-        }
+        let certR1csExists  = fm.fileExists(atPath: workDir.appendingPathComponent(certChainR1csName).path)
+        let certKeyExists   = fm.fileExists(atPath: keysDestDir.appendingPathComponent(certChainProvingKeyName).path)
+        let devR1csExists   = fm.fileExists(atPath: workDir.appendingPathComponent(deviceSigR1csName).path)
+        let devKeyExists    = fm.fileExists(atPath: keysDestDir.appendingPathComponent(deviceSigProvingKeyName).path)
 
-        let r1csExists = FileManager.default.fileExists(atPath: workDir.appendingPathComponent(circuitName).path)
-        let keyExists  = FileManager.default.fileExists(atPath: workDir.appendingPathComponent("keys").appendingPathComponent(provingKeyName).path)
-
-        if r1csExists && keyExists {
+        if certR1csExists && certKeyExists && devR1csExists && devKeyExists {
             circuitReady = true
             isDownloading = false
             return
         }
 
+        let setProgress: @Sendable (Double) -> Void = { [weak self] p in
+            Task { @MainActor [weak self] in self?.downloadProgress = p }
+        }
+
+        // Capture URL and name constants for use in detached task
+        let certR1csURL    = certChainR1csURL
+        let certKeyURL     = certChainProvingKeyURL
+        let devR1csURL     = deviceSigR1csURL
+        let devKeyURL      = deviceSigProvingKeyURL
+        let certR1csName   = certChainR1csName
+        let certKeyName    = certChainProvingKeyName
+        let devR1csName    = deviceSigR1csName
+        let devKeyName     = deviceSigProvingKeyName
+        let r1csDir        = workDir
+        let tmpDir         = fm.temporaryDirectory
+
         do {
-            try FileManager.default.createDirectory(at: keysDestDir, withIntermediateDirectories: true)
-            // Run download + unzip off the main actor so the UI stays live.
+            try fm.createDirectory(at: workDir, withIntermediateDirectories: true)
+            try fm.createDirectory(at: keysDestDir, withIntermediateDirectories: true)
+
             let (dl, unzip) = try await Task.detached(priority: .userInitiated) {
                 let t0 = Date()
 
-                // Download r1cs (progress 0.0–0.5) only if missing
-                if !r1csExists {
-                    try await Self.downloadFile(from: circuitZipURL, to: tmpR1cs) { p in
-                        setProgress(p * 0.5)
+                // 4 files, 25% progress each: certR1cs, certKey, devR1cs, devKey
+                let jobs: [(URL, URL, Bool, String)] = [
+                    (certR1csURL,  r1csDir,      certR1csExists, certR1csName),
+                    (certKeyURL,   keysDestDir,  certKeyExists,  certKeyName),
+                    (devR1csURL,   r1csDir,      devR1csExists,  devR1csName),
+                    (devKeyURL,    keysDestDir,  devKeyExists,   devKeyName),
+                ]
+
+                for (i, (remoteURL, destDir, alreadyExists, fileName)) in jobs.enumerated() {
+                    let base = Double(i) * 0.25
+                    if alreadyExists {
+                        setProgress(base + 0.25)
+                        continue
                     }
-                } else {
-                    setProgress(0.5)
+                    let tmp = tmpDir.appendingPathComponent("\(fileName).gz")
+                    try await Self.downloadFile(from: remoteURL, to: tmp) { p in
+                        setProgress(base + p * 0.25)
+                    }
+                    let dest = destDir.appendingPathComponent(fileName)
+                    try await Self.decompressGz(from: tmp, to: dest)
                 }
 
-                // Download proving key (progress 0.5–1.0) only if missing
-                if !keyExists {
-                    try await Self.downloadFile(from: provingKeyURL, to: tmpKey) { p in
-                        setProgress(0.5 + p * 0.5)
-                    }
-                } else {
-                    setProgress(1.0)
-                }
                 let downloadTime = Date().timeIntervalSince(t0)
-
-                let t1 = Date()
-                for (tmpZip, destDir, exists) in [(tmpR1cs, r1csDestDir, r1csExists), (tmpKey, keysDestDir, keyExists)] {
-                    guard !exists else { continue }
-                    let archive = try Archive(url: tmpZip, accessMode: .read)
-                    for entry in archive where entry.type == .file {
-                        let dest = destDir.appendingPathComponent(entry.path)
-                        if FileManager.default.fileExists(atPath: dest.path) {
-                            try FileManager.default.removeItem(at: dest)
-                        }
-                        _ = try archive.extract(entry, to: dest)
-                    }
-                    try? FileManager.default.removeItem(at: tmpZip)
-                }
-                let unzipTime = Date().timeIntervalSince(t1)
-
-                return (downloadTime, unzipTime)
+                return (downloadTime, 0.0)
             }.value
 
             downloadSeconds = dl
-            unzipSeconds = unzip
+            unzipSeconds = unzip > 0 ? unzip : nil
 
-            circuitReady = FileManager.default.fileExists(atPath: workDir.appendingPathComponent(circuitName).path)
-                && FileManager.default.fileExists(atPath: workDir.appendingPathComponent("keys").appendingPathComponent(provingKeyName).path)
+            circuitReady = fm.fileExists(atPath: workDir.appendingPathComponent(certChainR1csName).path)
+                && fm.fileExists(atPath: keysDestDir.appendingPathComponent(certChainProvingKeyName).path)
+                && fm.fileExists(atPath: workDir.appendingPathComponent(deviceSigR1csName).path)
+                && fm.fileExists(atPath: keysDestDir.appendingPathComponent(deviceSigProvingKeyName).path)
         } catch {
             downloadError = error.localizedDescription
         }
 
         isDownloading = false
+    }
+
+    private static func decompressGz(from gzURL: URL, to destination: URL) throws {
+        guard let gz = gzopen(gzURL.path, "rb") else {
+            throw NSError(domain: "GzipDecompressError", code: 1,
+                          userInfo: [NSLocalizedDescriptionKey: "Cannot open: \(gzURL.lastPathComponent)"])
+        }
+        defer { gzclose(gz) }
+
+        if FileManager.default.fileExists(atPath: destination.path) {
+            try FileManager.default.removeItem(at: destination)
+        }
+        FileManager.default.createFile(atPath: destination.path, contents: nil)
+        guard let outHandle = FileHandle(forWritingAtPath: destination.path) else {
+            throw NSError(domain: "GzipDecompressError", code: 2,
+                          userInfo: [NSLocalizedDescriptionKey: "Cannot write: \(destination.lastPathComponent)"])
+        }
+        defer { try? outHandle.close() }
+
+        let bufSize: Int32 = 65536
+        var buf = [UInt8](repeating: 0, count: Int(bufSize))
+        while true {
+            let n = gzread(gz, &buf, UInt32(bufSize))
+            if n <= 0 { break }
+            outHandle.write(Data(buf[..<Int(n)]))
+        }
+        try? FileManager.default.removeItem(at: gzURL)
     }
 
     private static func downloadFile(
@@ -336,31 +371,30 @@ final class ProofViewModel {
     }
 
     func runGenerateInput() async {
-        let outPath = workDir.appendingPathComponent("input.json").path
         guard let certb64 = athIssuerCert else { return }
-        guard let signedResponse = athResponseString else { return  }
+        guard let signedResponse = athResponseString else { return }
+        let outDir = workDir.path
         let issuerCertPath = workDir.appendingPathComponent("MOICA-G3.cer").path
-        print("certb64: \(certb64)")
-        print("signedResponse: \(signedResponse)")
-        print("tbs: \(tbs)")
-        print("issuerCertPath: \(issuerCertPath)")
-        print("outPath: \(outPath)")
+        let tbsCapture = tbs
+        generateInputStatus = .running
         do {
             let resultPath = try await Task.detached(priority: .userInitiated) {
-                try await generateInputFido(
+                try generateCertChainRs4096Input(
                     certb64: certb64,
                     signedResponse: signedResponse,
-                    tbs: self.tbs,
+                    tbs: tbsCapture,
                     issuerCertPath: issuerCertPath,
                     smtServer: nil,
                     issuerId: "g2",
-                    outputPath: outPath
+                    outputDir: outDir
                 )
             }.value
             generatedInputPath = resultPath
+            // Log all files written to outDir to verify both input JSONs are present
+            let created = (try? FileManager.default.contentsOfDirectory(atPath: outDir)) ?? []
+            print("generateCertChainRs4096Input returned: \(resultPath)")
+            print("workDir contents after generate: \(created.sorted())")
             generateInputStatus = .success(resultPath)
-            let resultJson = try JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: resultPath))) as? [String: Any]
-            print("resultJson: \(resultJson)")
         } catch {
             generateInputStatus = .failure(error.localizedDescription)
         }
@@ -368,10 +402,10 @@ final class ProofViewModel {
 
     func runSetupKeys() async {
         setupStatus = .running
-        let dp = documentsPath, ip = inputPath
+        let dp = documentsPath
         do {
             let msg = try await Task.detached(priority: .userInitiated) {
-                try setupKeysFido(documentsPath: dp, inputPath: ip)
+                try setupKeys(documentsPath: dp)
             }.value
             setupStatus = .success(msg)
         } catch {
@@ -398,12 +432,14 @@ final class ProofViewModel {
     private func _runProve() async {
         proveStatus = .running
         let dp = documentsPath
-        let ip = generatedInputPath ?? inputPath
         do {
-            let result = try await Task.detached(priority: .userInitiated) {
-                try proveFido(documentsPath: dp, inputPath: ip)
+            let ms = try await Task.detached(priority: .userInitiated) {
+                let t0 = Date()
+                _ = try proveCertChainRs4096(documentsPath: dp)
+                _ = try proveDeviceSigRs2048(documentsPath: dp)
+                return Int(Date().timeIntervalSince(t0) * 1000)
             }.value
-            proveStatus = .success("\(result.proveMs) ms · \(result.proofSizeBytes) B")
+            proveStatus = .success("\(ms) ms")
         } catch {
             proveStatus = .failure(error.localizedDescription)
         }
@@ -412,38 +448,42 @@ final class ProofViewModel {
     private func _runVerify() async {
         verifyStatus = .running
 
-        // Download verifying key on demand if not already present
+        let fm = FileManager.default
         let keysDir = workDir.appendingPathComponent("keys", isDirectory: true)
-        let verifyingKeyDest = keysDir.appendingPathComponent(verifyingKeyName)
-        if !FileManager.default.fileExists(atPath: verifyingKeyDest.path) {
-            let tmpVerifyingKey = FileManager.default.temporaryDirectory
-                .appendingPathComponent("\(verifyingKeyName).zip")
+
+        // Download verifying keys on demand
+        let verifyingKeys: [(String, URL)] = [
+            (certChainVerifyingKeyName,  certChainVerifyingKeyURL),
+            (deviceSigVerifyingKeyName,  deviceSigVerifyingKeyURL),
+        ]
+        for (keyName, remoteURL) in verifyingKeys {
+            let dest = keysDir.appendingPathComponent(keyName)
+            guard !fm.fileExists(atPath: dest.path) else { continue }
+            let tmp = fm.temporaryDirectory.appendingPathComponent("\(keyName).gz")
             do {
-                try FileManager.default.createDirectory(at: keysDir, withIntermediateDirectories: true)
+                try fm.createDirectory(at: keysDir, withIntermediateDirectories: true)
                 try await Task.detached(priority: .userInitiated) {
-                    try await Self.downloadFile(from: verifyingKeyURL, to: tmpVerifyingKey) { _ in }
-                    let archive = try Archive(url: tmpVerifyingKey, accessMode: .read)
-                    for entry in archive where entry.type == .file {
-                        let dest = keysDir.appendingPathComponent(entry.path)
-                        if FileManager.default.fileExists(atPath: dest.path) {
-                            try FileManager.default.removeItem(at: dest)
-                        }
-                        _ = try archive.extract(entry, to: dest)
-                    }
-                    try? FileManager.default.removeItem(at: tmpVerifyingKey)
+                    try await Self.downloadFile(from: remoteURL, to: tmp) { _ in }
+                    try await Self.decompressGz(from: tmp, to: dest)
                 }.value
             } catch {
-                verifyStatus = .failure("Failed to download verifying key: \(error.localizedDescription)")
+                verifyStatus = .failure("Failed to download \(keyName): \(error.localizedDescription)")
                 return
             }
         }
 
         let dp = documentsPath
         do {
-            let valid = try await Task.detached(priority: .userInitiated) {
-                try verifyFido(documentsPath: dp)
+            let (validChain, validDevice) = try await Task.detached(priority: .userInitiated) {
+                let c = try verifyCertChainRs4096(documentsPath: dp)
+                let d = try verifyDeviceSigRs2048(documentsPath: dp)
+                return (c, d)
             }.value
-            verifyStatus = valid ? .success("Proof is valid") : .failure("Proof is invalid")
+            switch (validChain, validDevice) {
+            case (true, true):   verifyStatus = .success("Both proofs valid")
+            case (false, _):     verifyStatus = .failure("CertChain proof invalid")
+            case (_, false):     verifyStatus = .failure("DeviceSig proof invalid")
+            }
         } catch {
             verifyStatus = .failure(error.localizedDescription)
         }
