@@ -25,7 +25,8 @@ private let smtSnapshotURL = URL(
   string:
     "https://github.com/moven0831/moica-revocation-smt/releases/download/snapshot-latest/g3-tree-snapshot.json.gz"
 )!
-private let serverURL = URL(string: "https://aff7-211-75-7-191.ngrok-free.app/challenge")!
+private let serverURL = URL(string: "https://435a-211-75-7-191.ngrok-free.app/challenge")!
+private let linkVerifyURL = URL(string: "https://435a-211-75-7-191.ngrok-free.app/link-verify")!
 
 @Observable
 @MainActor
@@ -276,7 +277,7 @@ final class ProofViewModel {
   // Stored ath-result fields used to generate circuit input
   var athResponseString: String?
   var athIssuerCert: String?
-  var athIssuerId: String = "g2"
+  var nullifier: String = "72911719481093693208513902246730484145653187491035661799159026261029904622383" // for testing
   var generateInputStatus: StepStatus = .idle
   var generatedInputPath: String?
 
@@ -485,20 +486,66 @@ final class ProofViewModel {
     }
 
     let dp = documentsPath
+    let workDirCapture = workDir
+    let challengeIdCapture = challengeId
+    let nullifierCapture = nullifier
     do {
-      let (validChain, validDevice, validLink) = try await Task.detached(priority: .userInitiated) {
+      let (validChain, validDevice, ccProof, dsProof) = try await Task.detached(
+        priority: .userInitiated
+      ) {
         let c = try verifyCertChainRs4096(documentsPath: dp)
         let d = try verifyDeviceSigRs2048(documentsPath: dp)
-        let l = try linkVerify(documentsPath: dp)
-        return (c, d, l)
+        let ccProof = try Data(
+          contentsOf: workDirCapture.appendingPathComponent("keys").appendingPathComponent("cert_chain_rs4096_proof.bin"))
+        let dsProof = try Data(
+          contentsOf: workDirCapture.appendingPathComponent("keys").appendingPathComponent("device_sig_rs2048_proof.bin"))
+        return (c, d, ccProof, dsProof)
       }.value
-      switch (validChain, validDevice, validLink) {
-      case (true, true, true): verifyStatus = .success("All proofs valid")
-      case (false, _, _): verifyStatus = .failure("CertChain proof invalid")
-      case (_, false, _): verifyStatus = .failure("DeviceSig proof invalid")
-      case (_, _, false): verifyStatus = .failure("Link proof invalid")
+
+      guard validChain else { verifyStatus = .failure("CertChain proof invalid"); return }
+      guard validDevice else { verifyStatus = .failure("DeviceSig proof invalid"); return }
+
+      struct LinkVerifyRequest: Encodable {
+        let challengeId: String
+        let certChainType: String
+        let certChainProof: Data
+        let deviceSigProof: Data
+        let nullifier: String
+        enum CodingKeys: String, CodingKey {
+          case challengeId = "challenge_id"
+          case certChainType = "cert_chain_type"
+          case certChainProof = "cert_chain_proof"
+          case deviceSigProof = "device_sig_proof"
+          case nullifier
+        }
       }
+
+      var request = URLRequest(url: linkVerifyURL)
+      request.httpMethod = "POST"
+      request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+      request.setValue("true", forHTTPHeaderField: "ngrok-skip-browser-warning")
+      request.httpBody = try JSONEncoder().encode(
+        LinkVerifyRequest(
+          challengeId: challengeIdCapture,
+          certChainType: "rs4096",
+          certChainProof: ccProof,
+          deviceSigProof: dsProof,
+          nullifier: nullifierCapture
+        ))
+
+      let (data, response) = try await URLSession.shared.data(for: request)
+      let raw = String(data: data, encoding: .utf8) ?? ""
+      print("link-verify response: \(raw)")
+
+      guard (response as? HTTPURLResponse)?.statusCode == 200 else {
+        let code = (response as? HTTPURLResponse)?.statusCode ?? 0
+        verifyStatus = .failure("link-verify failed (\(code)): \(raw)")
+        return
+      }
+
+      verifyStatus = .success("All proofs valid")
     } catch {
+      print("_runVerify error: \(error)")
       verifyStatus = .failure(error.localizedDescription)
     }
   }
