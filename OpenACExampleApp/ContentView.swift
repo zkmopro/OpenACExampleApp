@@ -39,7 +39,7 @@ struct ContentView: View {
         NavigationStack {
             List {
                 // ── Circuit Download ───────────────────────────────────
-                if !vm.circuitReady || vm.downloadSeconds != nil {
+                if !vm.circuitReady {
                     Section {
                         CircuitDownloadCard(vm: vm)
                     } header: {
@@ -55,6 +55,32 @@ struct ContentView: View {
                             .font(.subheadline)
                         SecureField("e.g. A123456789", text: $vm.idNum)
                             .textFieldStyle(.roundedBorder)
+                    }
+
+                    // Row 0b – TBS input
+                    HStack {
+                        Text("TBS")
+                            .font(.subheadline)
+                        TextField("To-be-signed data", text: $vm.tbs)
+                            .textFieldStyle(.roundedBorder)
+                        Button {
+                            Task { await vm.regenerateTBS() }
+                        } label: {
+                            Group {
+                                if case .running = vm.tbsStatus {
+                                    ProgressView().controlSize(.small)
+                                } else {
+                                    Image(systemName: "arrow.clockwise")
+                                }
+                            }
+                        }
+                        .buttonStyle(.borderless)
+                        .disabled(vm.tbsStatus == .running)
+                    }
+                    if case .failure(let msg) = vm.tbsStatus {
+                        Text(msg)
+                            .font(.caption)
+                            .foregroundStyle(.red)
                     }
 
                     // Row 1 – fetch ticket
@@ -250,13 +276,13 @@ struct ContentView: View {
                     .padding(.vertical, 4)
                     .animation(.default, value: vm.generateInputStatus)
                 } header: {
-                    Text("FIDO / MOICA")
+                    Text("TW FidO / MOICA")
                 }
 
                 // ── Pipeline Steps ─────────────────────────────────────
                 Section {
                     StepRow(index: 1, title: "Generate Proof",
-                            subtitle: "Prove the FIDO circuit",
+                            subtitle: "Prove the TW FidO circuit",
                             status: vm.proveStatus) {
                         Task { await vm.runProve() }
                     }
@@ -301,7 +327,7 @@ private struct CircuitDownloadCard: View {
                 .font(.headline)
                 .foregroundStyle(.blue)
 
-            Text("sha256rsa4096.r1cs (~92.9 MB), rs256_4096_proving.key (~66.9 MB) must be downloaded before running the pipeline.")
+            Text("cert_chain_rs4096_proving.key and device_sig_rs2048_proving.key must be downloaded before running the pipeline.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
 
