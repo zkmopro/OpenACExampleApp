@@ -30,7 +30,7 @@ The verifying keys for both circuits are fetched on demand when **Verify** is fi
 | Step | Description |
 |---|---|
 | **ID Number** | Enter your Taiwan national ID (e.g. `A123456789`) |
-| **TBS** | To-be-signed challenge bytes. Tap the refresh button to call `POST /challenge` on the server and receive a `challenge_bytes` + `challenge_id`. |
+| **TBS** | To-be-signed challenge bytes. Tap the refresh button to call `POST /challenge` on the server and receive a `challenge_bytes`. |
 | **Get SP Ticket** | Calls `POST /fido/sp-ticket` with the ID number and TBS. Returns a signed `sp_ticket`. |
 | **Verify with MOICA** | Deep-links to `mobilemoica://moica.moi.gov.tw/a2a/verifySign` so the MOICA app performs the signature. Returns to `openac://callback`. |
 | **Auth Result** | Calls `POST /fido/ath-result`, polling until the signed response and signer certificate are available. |
@@ -41,7 +41,7 @@ The verifying keys for both circuits are fetched on demand when **Verify** is fi
 | Step | Description |
 |---|---|
 | **Generate Proof** | Runs `proveCertChainRs4096` and `proveDeviceSigRs2048` (Groth16 provers). Reports time in ms. |
-| **Verify** | Runs local verification (`verifyCertChainRs4096`, `verifyDeviceSigRs2048`), reads the resulting `.bin` proof files, then submits them to `POST /link-verify` with the challenge ID, cert chain type (`rs4096`), and nullifier. |
+| **Verify** | Runs local verification (`verifyCertChainRs4096`, `verifyDeviceSigRs2048`), reads the resulting `.bin` proof files, then submits them to `POST /link-verify` with the challenge ID, cert chain type (`rs4096`). |
 
 Individual steps can be triggered with their own play button, or tap **Run All Steps** in the toolbar to run prove + verify in sequence.
 
@@ -49,11 +49,9 @@ Individual steps can be triggered with their own play button, or tap **Run All S
 
 ```json
 {
-  "challenge_id": "<string>",
   "cert_chain_type": "rs4096",
   "cert_chain_proof": "<base64-encoded bytes>",
   "device_sig_proof": "<base64-encoded bytes>",
-  "nullifier": "<string>"
 }
 ```
 
