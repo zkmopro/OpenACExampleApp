@@ -245,7 +245,6 @@ final class ProofViewModel {
   var spTicketStatus: StepStatus = .idle
   var spTicket: String?
   var tbs: String = ""
-  var challengeId: String = ""
   var rtnVal: String?
 
   var tbsStatus: StepStatus = .idle
@@ -266,7 +265,6 @@ final class ProofViewModel {
         throw URLError(.cannotParseResponse)
       }
       tbs = challengeBytes
-      challengeId = json["challenge_id"] as? String ?? ""
       tbsStatus = .success("challenge received")
     } catch {
       tbsStatus = .failure(error.localizedDescription)
@@ -277,7 +275,6 @@ final class ProofViewModel {
   // Stored ath-result fields used to generate circuit input
   var athResponseString: String?
   var athIssuerCert: String?
-  var nullifier: String = "72911719481093693208513902246730484145653187491035661799159026261029904622383" // for testing
   var generateInputStatus: StepStatus = .idle
   var generatedInputPath: String?
 
@@ -487,36 +484,26 @@ final class ProofViewModel {
 
     let dp = documentsPath
     let workDirCapture = workDir
-    let challengeIdCapture = challengeId
-    let nullifierCapture = nullifier
     do {
-      let (validChain, validDevice, ccProof, dsProof) = try await Task.detached(
+      let ( ccProof, dsProof) = try await Task.detached(
         priority: .userInitiated
       ) {
-        let c = try verifyCertChainRs4096(documentsPath: dp)
-        let d = try verifyDeviceSigRs2048(documentsPath: dp)
         let ccProof = try Data(
           contentsOf: workDirCapture.appendingPathComponent("keys").appendingPathComponent("cert_chain_rs4096_proof.bin"))
         let dsProof = try Data(
           contentsOf: workDirCapture.appendingPathComponent("keys").appendingPathComponent("device_sig_rs2048_proof.bin"))
-        return (c, d, ccProof, dsProof)
+        return (ccProof, dsProof)
       }.value
 
-      guard validChain else { verifyStatus = .failure("CertChain proof invalid"); return }
-      guard validDevice else { verifyStatus = .failure("DeviceSig proof invalid"); return }
 
       struct LinkVerifyRequest: Encodable {
-        let challengeId: String
         let certChainType: String
         let certChainProof: Data
         let deviceSigProof: Data
-        let nullifier: String
         enum CodingKeys: String, CodingKey {
-          case challengeId = "challenge_id"
           case certChainType = "cert_chain_type"
           case certChainProof = "cert_chain_proof"
           case deviceSigProof = "device_sig_proof"
-          case nullifier
         }
       }
 
@@ -526,11 +513,9 @@ final class ProofViewModel {
       request.setValue("true", forHTTPHeaderField: "ngrok-skip-browser-warning")
       request.httpBody = try JSONEncoder().encode(
         LinkVerifyRequest(
-          challengeId: challengeIdCapture,
           certChainType: "rs4096",
           certChainProof: ccProof,
           deviceSigProof: dsProof,
-          nullifier: nullifierCapture
         ))
 
       let (data, response) = try await URLSession.shared.data(for: request)
