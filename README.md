@@ -7,7 +7,7 @@ Sample iOS app that runs the **OpenAC** zero-knowledge pipeline for the FIDO/SHA
 | Download Circuits | Sign with MOICA | Generate Proof |
 |:-:|:-:|:-:|
 | ![Download circuits](images/openac-ios-download-circuits.gif) | ![Sign with MOICA](images/openac-ios-sign.gif) | ![Generate proof](images/openac-ios-prove.gif) |
-| \~19 seconds | \~11 seconds | prove \~ 9 seconds \| verify \~9 seconds |
+| \~10 seconds | \~11 seconds | prove \~ 5 seconds \| verify \~13 seconds |
 
 ## How it works
 
