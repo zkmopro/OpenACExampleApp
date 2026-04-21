@@ -12,15 +12,9 @@ import zlib
 private let certChainProvingKeyURL = URL(
   string:
     "https://github.com/zkmopro/zkID/releases/download/latest/cert_chain_rs4096_proving.key.gz")!
-private let certChainVerifyingKeyURL = URL(
-  string:
-    "https://github.com/zkmopro/zkID/releases/download/latest/cert_chain_rs4096_verifying.key.gz")!
 private let deviceSigProvingKeyURL = URL(
   string:
     "https://github.com/zkmopro/zkID/releases/download/latest/device_sig_rs2048_proving.key.gz")!
-private let deviceSigVerifyingKeyURL = URL(
-  string:
-    "https://github.com/zkmopro/zkID/releases/download/latest/device_sig_rs2048_verifying.key.gz")!
 private let smtSnapshotURL = URL(
   string:
     "https://github.com/moven0831/moica-revocation-smt/releases/download/snapshot-latest/g3-tree-snapshot.json.gz"
@@ -52,9 +46,7 @@ final class ProofViewModel {
 
   // Circuit file names
   let certChainProvingKeyName = "cert_chain_rs4096_proving.key"
-  let certChainVerifyingKeyName = "cert_chain_rs4096_verifying.key"
   let deviceSigProvingKeyName = "device_sig_rs2048_proving.key"
-  let deviceSigVerifyingKeyName = "device_sig_rs2048_verifying.key"
   let smtSnapshotName = "g3-tree-snapshot.json.gz"
   var circuitReady = false
   var isDownloading = false
@@ -457,30 +449,6 @@ final class ProofViewModel {
 
   private func _runVerify() async {
     verifyStatus = .running
-
-    let fm = FileManager.default
-    let keysDir = workDir.appendingPathComponent("keys", isDirectory: true)
-
-    // Download verifying keys on demand
-    let verifyingKeys: [(String, URL)] = [
-      (certChainVerifyingKeyName, certChainVerifyingKeyURL),
-      (deviceSigVerifyingKeyName, deviceSigVerifyingKeyURL),
-    ]
-    for (keyName, remoteURL) in verifyingKeys {
-      let dest = keysDir.appendingPathComponent(keyName)
-      guard !fm.fileExists(atPath: dest.path) else { continue }
-      let tmp = fm.temporaryDirectory.appendingPathComponent("\(keyName).gz")
-      do {
-        try fm.createDirectory(at: keysDir, withIntermediateDirectories: true)
-        try await Task.detached(priority: .userInitiated) {
-          try await Self.downloadFile(from: remoteURL, to: tmp) { _ in }
-          try await Self.decompressGz(from: tmp, to: dest)
-        }.value
-      } catch {
-        verifyStatus = .failure("Failed to download \(keyName): \(error.localizedDescription)")
-        return
-      }
-    }
 
     let dp = documentsPath
     let workDirCapture = workDir

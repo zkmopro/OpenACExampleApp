@@ -23,7 +23,6 @@ Downloads three files from cloud storage (shown only when not yet present):
 | `device_sig_rs2048_proving.key` | zkID releases (gz) | ~large |
 | `g3-tree-snapshot.json.gz` | moica-revocation-smt releases | — |
 
-The verifying keys for both circuits are fetched on demand when **Verify** is first run. Once all three files are present the Setup section collapses.
 
 ### 2. TW FidO / MOICA — Authenticate with national ID
 
@@ -41,7 +40,7 @@ The verifying keys for both circuits are fetched on demand when **Verify** is fi
 | Step | Description |
 |---|---|
 | **Generate Proof** | Runs `proveCertChainRs4096` and `proveDeviceSigRs2048` (Groth16 provers). Reports time in ms. |
-| **Verify** | Runs local verification (`verifyCertChainRs4096`, `verifyDeviceSigRs2048`), reads the resulting `.bin` proof files, then submits them to `POST /link-verify` with the challenge ID, cert chain type (`rs4096`). |
+| **Verify** | Submits proofs to `POST /link-verify` with the challenge ID, cert chain type (`rs4096`). |
 
 Individual steps can be triggered with their own play button, or tap **Run All Steps** in the toolbar to run prove + verify in sequence.
 
