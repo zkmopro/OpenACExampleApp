@@ -12,15 +12,15 @@ import zlib
 private let certChainProvingKeyURL = URL(
   string:
     "https://github.com/zkmopro/zkID/releases/download/latest/cert_chain_rs4096_proving.key.gz")!
-private let deviceSigProvingKeyURL = URL(
+private let userSigProvingKeyURL = URL(
   string:
-    "https://github.com/zkmopro/zkID/releases/download/latest/device_sig_rs2048_proving.key.gz")!
+    "https://github.com/zkmopro/zkID/releases/download/latest/user_sig_rs2048_proving.key.gz")!
 private let smtSnapshotURL = URL(
   string:
     "https://github.com/moven0831/moica-revocation-smt/releases/download/snapshot-latest/g3-tree-snapshot.json.gz"
 )!
-private let serverURL = URL(string: "https://435a-211-75-7-191.ngrok-free.app/challenge")!
-private let linkVerifyURL = URL(string: "https://435a-211-75-7-191.ngrok-free.app/link-verify")!
+private let serverURL = URL(string: "https://a5b6-3-85-109-129.ngrok-free.app/challenge")!
+private let linkVerifyURL = URL(string: "https://a5b6-3-85-109-129.ngrok-free.app/link-verify")!
 
 @Observable
 @MainActor
@@ -36,6 +36,11 @@ final class ProofViewModel {
       if case .success = self { return true }
       return false
     }
+
+    var errorMessage: String? {
+      if case .failure(let msg) = self { return msg }
+      return nil
+    }
   }
 
   // Pipeline step states
@@ -46,7 +51,7 @@ final class ProofViewModel {
 
   // Circuit file names
   let certChainProvingKeyName = "cert_chain_rs4096_proving.key"
-  let deviceSigProvingKeyName = "device_sig_rs2048_proving.key"
+  let userSigProvingKeyName = "user_sig_rs2048_proving.key"
   let smtSnapshotName = "g3-tree-snapshot.json.gz"
   var circuitReady = false
   var isDownloading = false
@@ -54,6 +59,28 @@ final class ProofViewModel {
   var downloadError: String?
   var downloadSeconds: Double?
   var unzipSeconds: Double?
+
+  // MARK: - Flow Navigation
+
+  enum FlowStep: Equatable {
+    case intro
+    case readiness
+    case returned
+    case verifying
+    case submitting
+    case success
+    case failure(String)
+  }
+
+  var flowStep: FlowStep = .intro
+  var verificationStartTime: Date?
+  var totalVerificationSeconds: Double?
+  var verifyMilliseconds: Int?
+
+  var moicaAppInstalled: Bool {
+    guard let url = URL(string: "mobilemoica://") else { return false }
+    return UIApplication.shared.canOpenURL(url)
+  }
 
   // MARK: - Paths
 
@@ -82,7 +109,7 @@ final class ProofViewModel {
     let keysDir = workDir.appendingPathComponent("keys")
     circuitReady =
       fm.fileExists(atPath: keysDir.appendingPathComponent(certChainProvingKeyName).path)
-      && fm.fileExists(atPath: keysDir.appendingPathComponent(deviceSigProvingKeyName).path)
+      && fm.fileExists(atPath: keysDir.appendingPathComponent(userSigProvingKeyName).path)
       && fm.fileExists(atPath: workDir.appendingPathComponent(smtSnapshotName).path)
 
     // Copy bundled MOICA-G3.cer into workDir if not already present
@@ -110,12 +137,12 @@ final class ProofViewModel {
     let workDirCapture = workDir
     let certKeyExists = fm.fileExists(
       atPath: keysDestDir.appendingPathComponent(certChainProvingKeyName).path)
-    let devKeyExists = fm.fileExists(
-      atPath: keysDestDir.appendingPathComponent(deviceSigProvingKeyName).path)
+    let userKeyExists = fm.fileExists(
+      atPath: keysDestDir.appendingPathComponent(userSigProvingKeyName).path)
     let snapshotExists = fm.fileExists(
       atPath: workDirCapture.appendingPathComponent(smtSnapshotName).path)
 
-    if certKeyExists && devKeyExists && snapshotExists {
+    if certKeyExists && userKeyExists && snapshotExists {
       circuitReady = true
       isDownloading = false
       return
@@ -127,10 +154,10 @@ final class ProofViewModel {
 
     // Capture URL and name constants for use in detached task
     let certKeyURL = certChainProvingKeyURL
-    let devKeyURL = deviceSigProvingKeyURL
+    let userKeyURL = userSigProvingKeyURL
     let snapURL = smtSnapshotURL
     let certKeyName = certChainProvingKeyName
-    let devKeyName = deviceSigProvingKeyName
+    let userKeyName = userSigProvingKeyName
     let snapName = smtSnapshotName
     let tmpDir = fm.temporaryDirectory
 
@@ -143,7 +170,7 @@ final class ProofViewModel {
         // (remoteURL, alreadyExists, destination, decompress)
         let jobs: [(URL, Bool, URL, Bool)] = [
           (certKeyURL, certKeyExists, keysDestDir.appendingPathComponent(certKeyName), true),
-          (devKeyURL, devKeyExists, keysDestDir.appendingPathComponent(devKeyName), true),
+          (userKeyURL, userKeyExists, keysDestDir.appendingPathComponent(userKeyName), true),
           (snapURL, snapshotExists, workDirCapture.appendingPathComponent(snapName), false),
         ]
         let slice = 1.0 / Double(jobs.count)
@@ -173,7 +200,7 @@ final class ProofViewModel {
 
       circuitReady =
         fm.fileExists(atPath: keysDestDir.appendingPathComponent(certChainProvingKeyName).path)
-        && fm.fileExists(atPath: keysDestDir.appendingPathComponent(deviceSigProvingKeyName).path)
+        && fm.fileExists(atPath: keysDestDir.appendingPathComponent(userSigProvingKeyName).path)
         && fm.fileExists(atPath: workDirCapture.appendingPathComponent(smtSnapshotName).path)
     } catch {
       downloadError = error.localizedDescription
@@ -233,13 +260,33 @@ final class ProofViewModel {
   static let returnScheme = "openac"
   static let returnURL = "\(returnScheme)://callback"
 
-  var idNum: String = "A123456789"
+  var idNum: String = ""
+  /// Bumped when `idNum` is edited so in-flight `computeSPTicket` results are ignored.
+  private var identityCheckEpoch: UInt = 0
   var spTicketStatus: StepStatus = .idle
   var spTicket: String?
   var tbs: String = ""
+  var challenge: String = ""
+  /// Server deadline for the current challenge (from `regenerateTBS` → `expires_at`).
+  var challengeExpiresAt: Date?
   var rtnVal: String?
 
   var tbsStatus: StepStatus = .idle
+
+  /// When `challengeExpiresAt` is set and in the past, the user must refresh the challenge.
+  var isChallengeExpired: Bool {
+    guard let end = challengeExpiresAt else { return false }
+    return Date() >= end
+  }
+
+  /// Call when the user edits the national ID field so prior ticket / success / failure no longer applies.
+  func resetIdentityCheckOnIdNumberEdit() {
+    identityCheckEpoch += 1
+    spTicketStatus = .idle
+    spTicket = nil
+    rtnVal = nil
+    challengeExpiresAt = nil
+  }
 
   func regenerateTBS() async {
     tbsStatus = .running
@@ -253,13 +300,24 @@ final class ProofViewModel {
       let raw = String(data: data, encoding: .utf8) ?? ""
       print("regenerateTBS raw response: \(raw)")
       let json = try JSONSerialization.jsonObject(with: data) as! [String: Any]
-      guard let challengeBytes = json["challenge_bytes"] as? String else {
-        throw URLError(.cannotParseResponse)
+      guard let appIdBytes = json["app_id"] as? String,
+            let challengeString = json["challenge"] as? String else {
+        challengeExpiresAt = nil
+        tbsStatus = .failure("Server error")
+        return
       }
-      tbs = challengeBytes
+      tbs = appIdBytes
+      challenge = challengeString
+      if let expiresString = json["expires_at"] as? String {
+        challengeExpiresAt = Self.parseChallengeExpiry(expiresString)
+      } else {
+        challengeExpiresAt = nil
+      }
+
       tbsStatus = .success("challenge received")
     } catch {
-      tbsStatus = .failure(error.localizedDescription)
+      challengeExpiresAt = nil
+      tbsStatus = .failure("Server error")
       print("regenerateTBS error: \(error)")
     }
   }
@@ -271,6 +329,7 @@ final class ProofViewModel {
   var generatedInputPath: String?
 
   func computeSPTicket() async {
+    let epochAtStart = identityCheckEpoch
     spTicketStatus = .running
     spTicket = nil
     rtnVal = nil
@@ -290,15 +349,31 @@ final class ProofViewModel {
           tbsEncoding: "base64"
         ))
 
-      let json = try JSONSerialization.jsonObject(with: Data(raw.utf8)) as! [String: Any]
-      spTicket = ((json["result"] as? [String: Any])?["sp_ticket"] as? String) ?? ""
-      print("spTicket: \(spTicket)")
+      guard epochAtStart == identityCheckEpoch else { return }
 
-      spTicketStatus =
-        spTicket?.isEmpty == false
-        ? .success("ticket received")
-        : .failure("sp_ticket not found in response: \(raw)")
+      let json = try JSONSerialization.jsonObject(with: Data(raw.utf8)) as! [String: Any]
+      let ticketCandidate = ((json["result"] as? [String: Any])?["sp_ticket"] as? String) ?? ""
+      print("spTicket: \(ticketCandidate)")
+
+      guard epochAtStart == identityCheckEpoch else { return }
+
+      spTicket = ticketCandidate
+
+      if !ticketCandidate.isEmpty {
+        spTicketStatus = .success("ticket received")
+      } else if let errMsg = json["error_message"] as? String, !errMsg.isEmpty {
+        if errMsg.contains("input id number not found in database") {
+          spTicketStatus = .failure("ID not found in database")
+        } else {
+          spTicketStatus = .failure(errMsg)
+        }
+      } else if let errCode = json["error_code"] as? String, !errCode.isEmpty {
+        spTicketStatus = .failure(errCode)
+      } else {
+        spTicketStatus = .failure("sp_ticket not found in response: \(raw)")
+      }
     } catch {
+      guard epochAtStart == identityCheckEpoch else { return }
       spTicketStatus = .failure(error.localizedDescription)
       print("spTicketStatus: \(spTicketStatus), error: \(error)")
     }
@@ -307,6 +382,7 @@ final class ProofViewModel {
   var athResultStatus: StepStatus = .idle
 
   func openMOICA() {
+    guard !isChallengeExpired else { return }
     guard let ticket = spTicket else { return }
     var comps = URLComponents()
     comps.scheme = "mobilemoica"
@@ -347,16 +423,99 @@ final class ProofViewModel {
       let item = comps.queryItems?.first(where: { $0.name == "rtn_val" })
     else { return }
     rtnVal = item.value
+    flowStep = .returned
+    Task { await pollAthResult() }
   }
 
   // MARK: - Pipeline Actions
 
   func reset() {
+    identityCheckEpoch += 1
+    isRunning = false
     generateInputStatus = .idle
     generatedInputPath = nil
     setupStatus = .idle
     proveStatus = .idle
     verifyStatus = .idle
+    athResultStatus = .idle
+    athResponseString = nil
+    athIssuerCert = nil
+    spTicket = nil
+    spTicketStatus = .idle
+    tbs = ""
+    challenge = ""
+    tbsStatus = .idle
+    rtnVal = nil
+    challengeExpiresAt = nil
+    verificationStartTime = nil
+    totalVerificationSeconds = nil
+    verifyMilliseconds = nil
+    idNum = ""
+    flowStep = .intro
+  }
+
+  private static let iso8601Fractional: ISO8601DateFormatter = {
+    let f = ISO8601DateFormatter()
+    f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    return f
+  }()
+
+  private static let iso8601Plain: ISO8601DateFormatter = {
+    let f = ISO8601DateFormatter()
+    f.formatOptions = [.withInternetDateTime]
+    return f
+  }()
+
+  /// Parses server timestamps such as `2026-05-02T14:38:30.798088+08:00`.
+  private static func parseChallengeExpiry(_ string: String) -> Date? {
+    Self.iso8601Fractional.date(from: string) ?? Self.iso8601Plain.date(from: string)
+  }
+
+  func runLocalVerification() async {
+    verificationStartTime = Date()
+    flowStep = .verifying
+    isRunning = true
+
+    if isChallengeExpired {
+      let msg = "Challenge expired, please refresh"
+      verifyStatus = .failure(msg)
+      flowStep = .failure(msg)
+      isRunning = false
+      return
+    }
+
+    await runGenerateInput()
+    guard generateInputStatus.isSuccess else {
+      flowStep = .failure(generateInputStatus.errorMessage ?? "Failed to prepare input")
+      isRunning = false
+      return
+    }
+
+    await _runProve()
+    guard proveStatus.isSuccess else {
+      flowStep = .failure(proveStatus.errorMessage ?? "Prove failed")
+      isRunning = false
+      return
+    }
+
+    if isChallengeExpired {
+      let msg = "Challenge expired, please refresh"
+      verifyStatus = .failure(msg)
+      flowStep = .failure(msg)
+      isRunning = false
+      return
+    }
+
+    flowStep = .submitting
+    await _runVerify()
+
+    if verifyStatus.isSuccess {
+      totalVerificationSeconds = verificationStartTime.map { Date().timeIntervalSince($0) }
+      flowStep = .success
+    } else {
+      flowStep = .failure(verifyStatus.errorMessage ?? "Verify failed")
+    }
+    isRunning = false
   }
 
   func runAll() async {
@@ -366,6 +525,12 @@ final class ProofViewModel {
 
     await _runProve()
     guard proveStatus.isSuccess else {
+      isRunning = false
+      return
+    }
+
+    guard !isChallengeExpired else {
+      verifyStatus = .failure("Challenge expired, please refresh")
       isRunning = false
       return
     }
@@ -381,6 +546,7 @@ final class ProofViewModel {
     let issuerCertPath = workDir.appendingPathComponent("MOICA-G3.cer").path
     let smtSnapshotPath = workDir.appendingPathComponent("g3-tree-snapshot.json.gz").path
     let tbsCapture = tbs
+    let challenge: String = challenge
     generateInputStatus = .running
     do {
       let resultPath = try await Task.detached(priority: .userInitiated) {
@@ -390,7 +556,9 @@ final class ProofViewModel {
           tbs: tbsCapture,
           issuerCertPath: issuerCertPath,
           smtSnapshotPath: smtSnapshotPath,
-          outputDir: outDir
+          outputDir: outDir,
+          challenge: challenge
+
         )
       }.value
       generatedInputPath = resultPath
@@ -438,7 +606,7 @@ final class ProofViewModel {
       let ms = try await Task.detached(priority: .userInitiated) {
         let t0 = Date()
         _ = try proveCertChainRs4096(documentsPath: dp)
-        _ = try proveDeviceSigRs2048(documentsPath: dp)
+        _ = try proveUserSigRs2048(documentsPath: dp)
         return Int(Date().timeIntervalSince(t0) * 1000)
       }.value
       proveStatus = .success("\(ms) ms")
@@ -447,31 +615,44 @@ final class ProofViewModel {
     }
   }
 
+  private func cleanupCircuitFiles() {
+    let fm = FileManager.default
+    try? fm.removeItem(at: workDir.appendingPathComponent("keys"))
+    try? fm.removeItem(at: workDir.appendingPathComponent(smtSnapshotName))
+    circuitReady = false
+  }
+
   private func _runVerify() async {
+    if isChallengeExpired {
+      verifyStatus = .failure("Challenge expired, please refresh")
+      return
+    }
+
     verifyStatus = .running
+    let verifyStart = Date()
 
     let dp = documentsPath
     let workDirCapture = workDir
     do {
-      let ( ccProof, dsProof) = try await Task.detached(
+      let ( ccProof, usProof) = try await Task.detached(
         priority: .userInitiated
       ) {
         let ccProof = try Data(
           contentsOf: workDirCapture.appendingPathComponent("keys").appendingPathComponent("cert_chain_rs4096_proof.bin"))
-        let dsProof = try Data(
-          contentsOf: workDirCapture.appendingPathComponent("keys").appendingPathComponent("device_sig_rs2048_proof.bin"))
-        return (ccProof, dsProof)
+        let usProof = try Data(
+          contentsOf: workDirCapture.appendingPathComponent("keys").appendingPathComponent("user_sig_rs2048_proof.bin"))
+        return (ccProof, usProof)
       }.value
 
 
       struct LinkVerifyRequest: Encodable {
         let certChainType: String
         let certChainProof: Data
-        let deviceSigProof: Data
+        let userSigProof: Data
         enum CodingKeys: String, CodingKey {
           case certChainType = "cert_chain_type"
           case certChainProof = "cert_chain_proof"
-          case deviceSigProof = "device_sig_proof"
+          case userSigProof = "user_sig_proof"
         }
       }
 
@@ -483,7 +664,7 @@ final class ProofViewModel {
         LinkVerifyRequest(
           certChainType: "rs4096",
           certChainProof: ccProof,
-          deviceSigProof: dsProof,
+          userSigProof: usProof,
         ))
 
       let (data, response) = try await URLSession.shared.data(for: request)
@@ -496,7 +677,9 @@ final class ProofViewModel {
         return
       }
 
+      verifyMilliseconds = Int(Date().timeIntervalSince(verifyStart) * 1000)
       verifyStatus = .success("All proofs valid")
+      cleanupCircuitFiles()
     } catch {
       print("_runVerify error: \(error)")
       verifyStatus = .failure(error.localizedDescription)
